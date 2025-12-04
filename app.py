@@ -1,10 +1,16 @@
 """
 ================================================================================
-POLYMARKET BITCOIN UP/DOWN 15-MINUTE TRADING BOT - CLOUD VERSION
+POLYMARKET 15-MIN COMBO BOT — MULTI-MARKET EDITION (BTC • ETH • SOL • XRP)
 ================================================================================
 
-A Streamlit-based manual trading bot for Polymarket's Bitcoin Up/Down 15-minute
+A Streamlit-based manual trading bot for Polymarket's Up/Down 15-minute
 prediction markets using the "gabagool-style" combo/hedge arbitrage strategy.
+
+SUPPORTED MARKETS:
+    - Bitcoin (BTC)
+    - Ethereum (ETH)
+    - Solana (SOL)
+    - XRP
 
 CLOUD DEPLOYMENT (Streamlit Community Cloud):
     1. Create new GitHub repo
@@ -30,7 +36,7 @@ STRATEGY:
     Each pair pays out exactly $1 at resolution regardless of outcome.
     Profit = $1 * locked_shares - cost_of_locked_shares
 
-gabagool style - Dec 2025 - printing season with the bros
+gabagool style - Dec 2025 - 4X PRINTING SEASON with the bros
 ================================================================================
 """
 
@@ -45,6 +51,7 @@ import pytz
 import pandas as pd
 from web3 import Web3
 from eth_account import Account
+from dateutil import parser as dateutil_parser
 
 # py-clob-client imports
 from py_clob_client.client import ClobClient
@@ -55,7 +62,7 @@ from py_clob_client.clob_types import OrderArgs
 # =============================================================================
 
 st.set_page_config(
-    page_title="BTC Up/Down Bot - Cloud",
+    page_title="Polymarket 15-Min Combo Bot",
     page_icon="🔥",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -66,96 +73,12 @@ st.set_page_config(
 # =============================================================================
 
 st.markdown("""
-<div style="background: linear-gradient(90deg, #1fff9f, #00c8ff); padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
-    <h1 style="color: black; margin:0; font-size: 2.8em;">🔥 POLYMARKET 15-MIN BTC COMBO BOT 🔥</h1>
-    <p style="color: black; margin:8px 0 0 0; font-size: 1.3em;"><strong>Cloud Version — Share this link with the boys</strong></p>
-    <p style="color: black; margin:5px 0; font-size: 1.1em;">Each tab = independent wallet • Keep open 24/7 • Refresh keeps your position</p>
+<div style="background: linear-gradient(90deg, #ff6b35, #f7c531, #1fff9f, #00c8ff); padding: 25px; border-radius: 16px; text-align: center; margin-bottom: 30px; box-shadow: 0 6px 30px rgba(0,0,0,0.3);">
+    <h1 style="color: black; margin:0; font-size: 2.5em; text-shadow: 1px 1px 2px rgba(255,255,255,0.3);">🔥 POLYMARKET 15-MIN COMBO BOT 🔥</h1>
+    <p style="color: black; margin:10px 0 0 0; font-size: 1.5em; font-weight: bold;">NOW 4X PRINTING (BTC • ETH • SOL • XRP)</p>
+    <p style="color: black; margin:8px 0; font-size: 1.1em;">Each tab = independent wallet • Multi-market simultaneous trading • Keep open 24/7</p>
 </div>
 """, unsafe_allow_html=True)
-
-# =============================================================================
-# SESSION STATE INITIALIZATION
-# =============================================================================
-
-if 'state' not in st.session_state:
-    st.session_state.state = {
-        "current_market_id": "",
-        "shares_up": 0.0,
-        "spent_up": 0.0,
-        "shares_down": 0.0,
-        "spent_down": 0.0,
-        "history": [],
-        "allowance_approved": False,
-        "trade_log": []  # list of dicts: {"time": ..., "side": "Up/Down", "usdc": amount, "shares": filled, "price": avg_price}
-    }
-
-if 'client' not in st.session_state:
-    st.session_state.client = None
-
-# =============================================================================
-# SIDEBAR - WALLET SETUP
-# =============================================================================
-
-st.sidebar.header("🔑 Wallet Setup (private to your browser only)")
-st.sidebar.markdown("Your private key stays in your browser session — never sent anywhere. Close tab = gone.")
-
-# Initialize wallet_connected state
-if 'wallet_connected' not in st.session_state:
-    st.session_state.wallet_connected = False
-    st.session_state.private_key = ""
-    st.session_state.rpc_url = "https://polygon-rpc.com"
-
-# If not connected, show input form
-if not st.session_state.wallet_connected:
-    private_key_input = st.sidebar.text_input(
-        "Private Key (with or without 0x)",
-        type="password",
-        help="Use a dedicated hot wallet with only your trading funds."
-    )
-
-    rpc_url_input = st.sidebar.text_input(
-        "Polygon RPC URL",
-        value="https://polygon-rpc.com",
-        help="Free public or use your Alchemy/Infura link for zero lag"
-    )
-
-    if st.sidebar.button("🔓 Connect Wallet", type="primary", use_container_width=True):
-        # Normalize private key - add 0x if missing
-        pk = private_key_input.strip()
-        if not pk.startswith("0x"):
-            pk = "0x" + pk
-
-        # Validate: should be 66 chars with 0x prefix (64 hex + "0x")
-        if len(pk) == 66:
-            try:
-                # Test if it's a valid key by deriving address
-                from eth_account import Account
-                test_account = Account.from_key(pk)
-
-                # Success! Store in session
-                st.session_state.private_key = pk
-                st.session_state.rpc_url = rpc_url_input
-                st.session_state.wallet_connected = True
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"Invalid private key: {e}")
-        else:
-            st.sidebar.error(f"Private key should be 64 hex characters (got {len(pk)-2})")
-
-    st.sidebar.markdown("---")
-    st.sidebar.caption("gabagool style • Dec 2025 • printing season with the bros")
-    st.warning("⚠️ Enter your private key and click 'Connect Wallet' to start")
-    st.stop()
-
-# Wallet is connected - show status and disconnect option
-PRIVATE_KEY = st.session_state.private_key
-POLYGON_RPC_URL = st.session_state.rpc_url
-
-if st.sidebar.button("🔒 Disconnect Wallet", use_container_width=True):
-    st.session_state.wallet_connected = False
-    st.session_state.private_key = ""
-    st.session_state.client = None
-    st.rerun()
 
 # =============================================================================
 # CONFIGURATION
@@ -175,6 +98,17 @@ EXCHANGE_CONTRACTS = [
     "0xC5d563A36AE78145C45a50134d48A1215220f80a",  # neg risk
     "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296",  # neg risk adapter
 ]
+
+# Supported coins for Up/Down markets
+SUPPORTED_COINS = {
+    "bitcoin": "BTC",
+    "btc": "BTC",
+    "ethereum": "ETH",
+    "eth": "ETH",
+    "solana": "SOL",
+    "sol": "SOL",
+    "xrp": "XRP",
+}
 
 # Trading safety parameters
 MAX_IMBALANCE = 500          # Max allowed share imbalance
@@ -223,6 +157,77 @@ MINIMAL_ERC1155_ABI = [
 ]
 
 # =============================================================================
+# SESSION STATE INITIALIZATION
+# =============================================================================
+
+if 'state' not in st.session_state:
+    st.session_state.state = {
+        "markets": {},  # Dict keyed by condition_id: {coin, shares_up, spent_up, shares_down, spent_down, trade_log}
+        "history": [],  # Archived completed markets
+        "allowance_approved": False,
+    }
+
+if 'client' not in st.session_state:
+    st.session_state.client = None
+
+if 'wallet_connected' not in st.session_state:
+    st.session_state.wallet_connected = False
+    st.session_state.private_key = ""
+    st.session_state.rpc_url = "https://polygon-rpc.com"
+
+# =============================================================================
+# SIDEBAR - WALLET SETUP
+# =============================================================================
+
+st.sidebar.header("🔑 Wallet Setup")
+st.sidebar.markdown("Private key stays in browser session only")
+
+# If not connected, show input form
+if not st.session_state.wallet_connected:
+    private_key_input = st.sidebar.text_input(
+        "Private Key (with or without 0x)",
+        type="password",
+        help="Use a dedicated hot wallet with only your trading funds."
+    )
+
+    rpc_url_input = st.sidebar.text_input(
+        "Polygon RPC URL",
+        value="https://polygon-rpc.com",
+        help="Free public or use your Alchemy/Infura link for zero lag"
+    )
+
+    if st.sidebar.button("🔓 Connect Wallet", type="primary", use_container_width=True):
+        # Normalize private key - add 0x if missing
+        pk = private_key_input.strip()
+        if not pk.startswith("0x"):
+            pk = "0x" + pk
+
+        # Validate: should be 66 chars with 0x prefix (64 hex + "0x")
+        if len(pk) == 66:
+            try:
+                # Test if it's a valid key by deriving address
+                test_account = Account.from_key(pk)
+
+                # Success! Store in session
+                st.session_state.private_key = pk
+                st.session_state.rpc_url = rpc_url_input
+                st.session_state.wallet_connected = True
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Invalid private key: {e}")
+        else:
+            st.sidebar.error(f"Private key should be 64 hex characters (got {len(pk)-2})")
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption("gabagool style • Dec 2025 • 4X printing season")
+    st.warning("⚠️ Enter your private key and click 'Connect Wallet' to start")
+    st.stop()
+
+# Wallet is connected
+PRIVATE_KEY = st.session_state.private_key
+POLYGON_RPC_URL = st.session_state.rpc_url
+
+# =============================================================================
 # WEB3 SETUP
 # =============================================================================
 
@@ -252,13 +257,12 @@ def get_usdc_balance() -> Optional[float]:
         raw_balance = usdc.functions.balanceOf(wallet_address).call()
         # USDC has 6 decimals
         return float(raw_balance) / 1_000_000
-    except Exception as e:
-        st.error(f"Error getting USDC balance: {e}")
+    except Exception:
         return None
 
 
-def get_pol_balance() -> Optional[float]:
-    """Get POL (native token) balance for gas fees."""
+def get_matic_balance() -> Optional[float]:
+    """Get MATIC (native token) balance for gas fees."""
     try:
         web3 = get_web3()
         if not web3.is_connected():
@@ -267,8 +271,7 @@ def get_pol_balance() -> Optional[float]:
         wallet_address = get_wallet_address()
         raw_balance = web3.eth.get_balance(wallet_address)
         return float(Web3.from_wei(raw_balance, "ether"))
-    except Exception as e:
-        st.error(f"Error getting POL balance: {e}")
+    except Exception:
         return None
 
 
@@ -351,6 +354,46 @@ def approve_all_contracts() -> bool:
 
 
 # =============================================================================
+# SIDEBAR - WALLET INFO + BALANCES
+# =============================================================================
+
+try:
+    wallet_addr = get_wallet_address()
+    st.sidebar.success(f"✅ {wallet_addr[:6]}...{wallet_addr[-4:]}")
+except:
+    st.sidebar.error("Invalid private key")
+    st.stop()
+
+# Wallet balances in sidebar
+st.sidebar.markdown("---")
+st.sidebar.subheader("💰 Balances")
+
+usdc_bal = get_usdc_balance()
+matic_bal = get_matic_balance()
+
+if usdc_bal is not None:
+    st.sidebar.markdown(f"<h2 style='color: #00c853; margin: 0;'>${usdc_bal:.2f} USDC</h2>", unsafe_allow_html=True)
+else:
+    st.sidebar.warning("USDC: Error")
+
+if matic_bal is not None:
+    st.sidebar.metric("MATIC (Gas)", f"{matic_bal:.4f}")
+else:
+    st.sidebar.warning("MATIC: Error")
+
+st.sidebar.markdown("---")
+
+if st.sidebar.button("🔒 Disconnect Wallet", use_container_width=True):
+    st.session_state.wallet_connected = False
+    st.session_state.private_key = ""
+    st.session_state.client = None
+    st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.caption("gabagool style • Dec 2025 • 4X printing season")
+
+
+# =============================================================================
 # CLOB CLIENT INITIALIZATION
 # =============================================================================
 
@@ -391,73 +434,101 @@ def get_clob_client() -> Optional[ClobClient]:
 
 
 # =============================================================================
-# MARKET DETECTION
+# MARKET DETECTION - BULLETPROOF MULTI-COIN
 # =============================================================================
 
-# Pattern to match Bitcoin Up/Down market questions
-# Example: "Bitcoin Up or Down - December 3, 3:45PM-4:00PM ET"
-MARKET_PATTERN = re.compile(
-    r"Bitcoin Up or Down.*?-\s*(\w+)\s+(\d+),?\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*-\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*ET",
-    re.IGNORECASE
-)
-
-
-def parse_market_time(question: str) -> Optional[Tuple[datetime, datetime]]:
+def detect_coin_from_question(question: str) -> Optional[str]:
     """
-    Parse market start and end times from the question string.
-
-    Args:
-        question: Market question like "Bitcoin Up or Down - December 3, 3:45PM-4:00PM ET"
-
-    Returns:
-        Tuple of (start_time, end_time) as timezone-aware datetime in ET,
-        or None if parsing fails
+    Detect which coin this market is for.
+    Returns the coin symbol (BTC, ETH, SOL, XRP) or None.
     """
-    match = MARKET_PATTERN.search(question)
-    if not match:
+    q_lower = question.lower()
+
+    # Must be an "up or down" market
+    if "up or down" not in q_lower:
         return None
 
-    month_name, day, start_hour, start_min, start_ampm, end_hour, end_min, end_ampm = match.groups()
+    # Check for each supported coin
+    for keyword, symbol in SUPPORTED_COINS.items():
+        if keyword in q_lower:
+            return symbol
 
-    # Convert to 24-hour format
-    start_h = int(start_hour)
-    end_h = int(end_hour)
+    return None
 
-    if start_ampm.upper() == "PM" and start_h != 12:
-        start_h += 12
-    elif start_ampm.upper() == "AM" and start_h == 12:
-        start_h = 0
 
-    if end_ampm.upper() == "PM" and end_h != 12:
-        end_h += 12
-    elif end_ampm.upper() == "AM" and end_h == 12:
-        end_h = 0
+def parse_market_time_flexible(question: str) -> Optional[Tuple[datetime, datetime]]:
+    """
+    Bulletproof time parsing for market questions.
+    Handles various formats:
+    - "December 3, 3:45PM-4:00PM ET"
+    - "December 3, 3:45 PM - 4:00 PM ET"
+    - "December 3, 1:00AM-1:15AM ET"
+    - "Dec 3, 03:45PM-04:00PM ET"
+    """
+    # Multiple regex patterns to catch different formats
+    patterns = [
+        # Pattern 1: "Month Day, H:MMAM/PM-H:MMAM/PM ET"
+        r"(\w+)\s+(\d{1,2}),?\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*ET",
+        # Pattern 2: With spaces around AM/PM
+        r"(\w+)\s+(\d{1,2}),?\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*ET",
+    ]
 
-    # Get current year
-    now = datetime.now(ET)
-    year = now.year
+    for pattern in patterns:
+        match = re.search(pattern, question, re.IGNORECASE)
+        if match:
+            groups = match.groups()
+            month_name, day, start_hour, start_min, start_ampm, end_hour, end_min, end_ampm = groups
 
-    # Parse month
-    month_map = {
-        "january": 1, "february": 2, "march": 3, "april": 4,
-        "may": 5, "june": 6, "july": 7, "august": 8,
-        "september": 9, "october": 10, "november": 11, "december": 12
-    }
-    month = month_map.get(month_name.lower())
-    if not month:
-        return None
+            # Convert to 24-hour format
+            start_h = int(start_hour)
+            end_h = int(end_hour)
 
-    try:
-        start_time = ET.localize(datetime(year, month, int(day), start_h, int(start_min)))
-        end_time = ET.localize(datetime(year, month, int(day), end_h, int(end_min)))
+            if start_ampm.upper() == "PM" and start_h != 12:
+                start_h += 12
+            elif start_ampm.upper() == "AM" and start_h == 12:
+                start_h = 0
 
-        # Handle midnight crossing (e.g., 11:45PM - 12:00AM)
-        if end_time < start_time:
-            end_time = end_time.replace(day=end_time.day + 1)
+            if end_ampm.upper() == "PM" and end_h != 12:
+                end_h += 12
+            elif end_ampm.upper() == "AM" and end_h == 12:
+                end_h = 0
 
-        return start_time, end_time
-    except ValueError:
-        return None
+            # Get current year
+            now = datetime.now(ET)
+            year = now.year
+
+            # Parse month (handle abbreviations)
+            month_map = {
+                "jan": 1, "january": 1,
+                "feb": 2, "february": 2,
+                "mar": 3, "march": 3,
+                "apr": 4, "april": 4,
+                "may": 5,
+                "jun": 6, "june": 6,
+                "jul": 7, "july": 7,
+                "aug": 8, "august": 8,
+                "sep": 9, "sept": 9, "september": 9,
+                "oct": 10, "october": 10,
+                "nov": 11, "november": 11,
+                "dec": 12, "december": 12
+            }
+            month = month_map.get(month_name.lower()[:3])
+            if not month:
+                continue
+
+            try:
+                start_time = ET.localize(datetime(year, month, int(day), start_h, int(start_min)))
+                end_time = ET.localize(datetime(year, month, int(day), end_h, int(end_min)))
+
+                # Handle midnight crossing (e.g., 11:45PM - 12:00AM)
+                if end_time < start_time:
+                    end_time = end_time.replace(day=end_time.day + 1)
+
+                return start_time, end_time
+            except ValueError:
+                continue
+
+    return None
 
 
 def fetch_active_markets() -> List[Dict]:
@@ -482,16 +553,16 @@ def fetch_active_markets() -> List[Dict]:
         return []
 
 
-def find_active_bitcoin_market() -> Optional[Dict]:
+def find_all_active_updown_markets() -> List[Dict]:
     """
-    Find the currently active Bitcoin Up/Down 15-minute market.
+    Find all currently active Up/Down 15-minute markets for supported coins.
 
     Returns:
-        Market dict with condition_id, tokens, question, and parsed times,
-        or None if no suitable market found
+        List of market dicts with condition_id, coin, tokens, question, and parsed times
     """
     markets = fetch_active_markets()
     now = datetime.now(ET)
+    active_markets = []
 
     for market in markets:
         # Skip inactive/closed markets
@@ -500,11 +571,13 @@ def find_active_bitcoin_market() -> Optional[Dict]:
 
         question = market.get("question", "")
 
-        # Check if it's a Bitcoin Up/Down market
-        if "bitcoin up or down" not in question.lower():
+        # Detect coin from question
+        coin = detect_coin_from_question(question)
+        if coin is None:
             continue
 
-        times = parse_market_time(question)
+        # Parse time window
+        times = parse_market_time_flexible(question)
         if times is None:
             continue
 
@@ -525,8 +598,9 @@ def find_active_bitcoin_market() -> Optional[Dict]:
                     down_token = token
 
             if up_token and down_token:
-                return {
+                active_markets.append({
                     "condition_id": market.get("condition_id"),
+                    "coin": coin,
                     "question": question,
                     "start_time": start_time,
                     "end_time": end_time,
@@ -534,9 +608,13 @@ def find_active_bitcoin_market() -> Optional[Dict]:
                     "down_token_id": down_token["token_id"],
                     "up_price": float(up_token.get("price", 0.5)),
                     "down_price": float(down_token.get("price", 0.5)),
-                }
+                })
 
-    return None
+    # Sort by coin name for consistent tab order
+    coin_order = {"BTC": 0, "ETH": 1, "SOL": 2, "XRP": 3}
+    active_markets.sort(key=lambda m: coin_order.get(m["coin"], 99))
+
+    return active_markets
 
 
 def get_seconds_remaining(end_time: datetime) -> int:
@@ -550,6 +628,65 @@ def format_countdown(seconds: int) -> str:
     """Format seconds as MM:SS countdown string."""
     minutes, secs = divmod(seconds, 60)
     return f"{minutes:02d}:{secs:02d}"
+
+
+# =============================================================================
+# MARKET STATE MANAGEMENT
+# =============================================================================
+
+def get_market_state(condition_id: str, coin: str) -> Dict:
+    """Get or create state for a specific market."""
+    markets = st.session_state.state["markets"]
+
+    if condition_id not in markets:
+        markets[condition_id] = {
+            "coin": coin,
+            "shares_up": 0.0,
+            "spent_up": 0.0,
+            "shares_down": 0.0,
+            "spent_down": 0.0,
+            "trade_log": [],
+        }
+
+    return markets[condition_id]
+
+
+def archive_old_markets(active_condition_ids: List[str]):
+    """Archive markets that are no longer active."""
+    markets = st.session_state.state["markets"]
+    history = st.session_state.state["history"]
+
+    to_archive = []
+    for cid, mstate in markets.items():
+        if cid not in active_condition_ids:
+            # Check if there were any positions
+            if mstate["shares_up"] > 0 or mstate["shares_down"] > 0:
+                locked_shares = min(mstate["shares_up"], mstate["shares_down"])
+                if locked_shares > 0 and mstate["shares_up"] > 0 and mstate["shares_down"] > 0:
+                    avg_up = mstate["spent_up"] / mstate["shares_up"]
+                    avg_down = mstate["spent_down"] / mstate["shares_down"]
+                    pair_cost = avg_up + avg_down
+                    locked_profit = locked_shares * (1 - pair_cost)
+                else:
+                    locked_profit = 0
+
+                history.insert(0, {
+                    "coin": mstate["coin"],
+                    "market_id": cid[:12] + "...",
+                    "end_time": datetime.now(ET).strftime("%H:%M"),
+                    "shares_up": round(mstate["shares_up"], 2),
+                    "shares_down": round(mstate["shares_down"], 2),
+                    "locked_profit": round(locked_profit, 2)
+                })
+
+            to_archive.append(cid)
+
+    # Remove archived markets
+    for cid in to_archive:
+        del markets[cid]
+
+    # Keep only last 50 history entries
+    st.session_state.state["history"] = history[:50]
 
 
 # =============================================================================
@@ -579,26 +716,23 @@ def get_prices(client: ClobClient, up_token_id: str, down_token_id: str) -> Tupl
         return mid_up, mid_down, ask_up, ask_down
 
     except Exception as e:
-        st.warning(f"Error fetching prices: {e}")
         return 0.50, 0.50, 0.50, 0.50
 
 
-def check_safety(side: str, seconds_remaining: int) -> Tuple[bool, str]:
+def check_safety(mstate: Dict, side: str, seconds_remaining: int) -> Tuple[bool, str]:
     """
     Check if a trade is allowed under safety rules.
 
     Returns:
         Tuple of (is_allowed, reason_if_blocked)
     """
-    state = st.session_state.state
-
     # Rule 1: No trading in final 90 seconds
     if seconds_remaining < NO_TRADE_SECONDS:
         return False, f"Trading disabled - {seconds_remaining}s remaining (min: {NO_TRADE_SECONDS}s)"
 
     # Rule 2: Check imbalance limits
-    shares_up = state["shares_up"]
-    shares_down = state["shares_down"]
+    shares_up = mstate["shares_up"]
+    shares_down = mstate["shares_down"]
     current_imbalance = abs(shares_up - shares_down)
 
     # Determine heavier side
@@ -619,17 +753,15 @@ def check_safety(side: str, seconds_remaining: int) -> Tuple[bool, str]:
     return True, ""
 
 
-def should_disable_button(side: str, seconds_remaining: int) -> bool:
+def should_disable_button(mstate: Dict, side: str, seconds_remaining: int) -> bool:
     """Determine if a buy button should be disabled."""
-    state = st.session_state.state
-
     # Disable if in final window
     if seconds_remaining < NO_TRADE_SECONDS:
         return True
 
     # Disable heavier side at warning threshold
-    shares_up = state["shares_up"]
-    shares_down = state["shares_down"]
+    shares_up = mstate["shares_up"]
+    shares_down = mstate["shares_down"]
     current_imbalance = abs(shares_up - shares_down)
 
     if shares_up > shares_down and side == "up" and current_imbalance >= WARN_IMBALANCE:
@@ -645,7 +777,7 @@ def execute_market_buy(
     token_id: str,
     side: str,
     cost_usd: float,
-    market_id: str,
+    mstate: Dict,
     seconds_remaining: int
 ) -> Tuple[bool, str, float, float]:
     """
@@ -654,10 +786,8 @@ def execute_market_buy(
     Returns:
         Tuple of (success, message, filled_size, actual_cost)
     """
-    state = st.session_state.state
-
     # Safety check
-    is_allowed, reason = check_safety(side, seconds_remaining)
+    is_allowed, reason = check_safety(mstate, side, seconds_remaining)
     if not is_allowed:
         return False, reason, 0, 0
 
@@ -711,7 +841,7 @@ def execute_market_buy(
 
         actual_cost = filled_size * exec_price
 
-        # Update session state
+        # Update market state
         trade_record = {
             "time": datetime.now(ET).strftime("%H:%M:%S"),
             "side": side.upper(),
@@ -719,15 +849,15 @@ def execute_market_buy(
             "shares": round(filled_size, 2),
             "price": round(exec_price, 3)
         }
-        state["trade_log"].insert(0, trade_record)
-        state["trade_log"] = state["trade_log"][:50]  # Keep last 50
+        mstate["trade_log"].insert(0, trade_record)
+        mstate["trade_log"] = mstate["trade_log"][:50]  # Keep last 50
 
         if side == "up":
-            state["shares_up"] += filled_size
-            state["spent_up"] += actual_cost
+            mstate["shares_up"] += filled_size
+            mstate["spent_up"] += actual_cost
         else:
-            state["shares_down"] += filled_size
-            state["spent_down"] += actual_cost
+            mstate["shares_down"] += filled_size
+            mstate["spent_down"] += actual_cost
 
         return True, f"Bought {filled_size:.2f} {side.upper()} @ ${exec_price:.3f}", filled_size, actual_cost
 
@@ -739,14 +869,12 @@ def execute_market_buy(
 # COMPUTED METRICS
 # =============================================================================
 
-def calculate_metrics() -> Dict[str, Any]:
-    """Calculate all position metrics."""
-    state = st.session_state.state
-
-    shares_up = state["shares_up"]
-    shares_down = state["shares_down"]
-    spent_up = state["spent_up"]
-    spent_down = state["spent_down"]
+def calculate_metrics(mstate: Dict) -> Dict[str, Any]:
+    """Calculate all position metrics for a market."""
+    shares_up = mstate["shares_up"]
+    shares_down = mstate["shares_down"]
+    spent_up = mstate["spent_up"]
+    spent_down = mstate["spent_down"]
 
     # Average costs
     avg_up = spent_up / shares_up if shares_up > 0 else 0
@@ -780,20 +908,12 @@ def calculate_metrics() -> Dict[str, Any]:
     }
 
 
-def calculate_projected_pair_cost(
-    buy_amount: float,
-    cheaper_side: str,
-    cheaper_ask: float
-) -> float:
-    """
-    Calculate projected pair cost if user buys $X of cheaper side.
-    """
-    state = st.session_state.state
-
-    shares_up = state["shares_up"]
-    shares_down = state["shares_down"]
-    spent_up = state["spent_up"]
-    spent_down = state["spent_down"]
+def calculate_projected_pair_cost(mstate: Dict, buy_amount: float, cheaper_side: str, cheaper_ask: float) -> float:
+    """Calculate projected pair cost if user buys $X of cheaper side."""
+    shares_up = mstate["shares_up"]
+    shares_down = mstate["shares_down"]
+    spent_up = mstate["spent_up"]
+    spent_down = mstate["spent_down"]
 
     new_shares = buy_amount / cheaper_ask if cheaper_ask > 0 else 0
 
@@ -821,6 +941,15 @@ def get_pair_cost_color(pair_cost: float) -> str:
         return "red"
 
 
+def get_total_locked_profit() -> float:
+    """Calculate total locked profit across all active markets."""
+    total = 0.0
+    for mstate in st.session_state.state["markets"].values():
+        metrics = calculate_metrics(mstate)
+        total += metrics["locked_profit"]
+    return total
+
+
 def get_total_history_profit() -> float:
     """Calculate total locked profit from all historical markets."""
     total = 0.0
@@ -829,40 +958,174 @@ def get_total_history_profit() -> float:
     return total
 
 
-def reset_for_new_market(new_market_id: str, old_question: str = ""):
-    """Archive current market and reset for a new one."""
-    state = st.session_state.state
+# =============================================================================
+# MARKET TAB UI
+# =============================================================================
 
-    # Archive if there was an active market with positions
-    if state["current_market_id"] and (state["shares_up"] > 0 or state["shares_down"] > 0):
-        # Calculate locked profit for history
-        locked_shares = min(state["shares_up"], state["shares_down"])
-        if locked_shares > 0:
-            avg_up = state["spent_up"] / state["shares_up"] if state["shares_up"] > 0 else 0
-            avg_down = state["spent_down"] / state["shares_down"] if state["shares_down"] > 0 else 0
-            pair_cost = avg_up + avg_down
-            locked_profit = locked_shares * (1 - pair_cost)
+def render_market_tab(market: Dict, client: ClobClient):
+    """Render the full dashboard for a single market inside its tab."""
+    condition_id = market["condition_id"]
+    coin = market["coin"]
+    mstate = get_market_state(condition_id, coin)
+
+    seconds_remaining = get_seconds_remaining(market["end_time"])
+
+    # Countdown + Question header
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        st.markdown(f"**{market['question']}**")
+
+    with col2:
+        countdown_color = "#ff5252" if seconds_remaining < NO_TRADE_SECONDS else "#00c853"
+        st.markdown(
+            f"<div style='font-size: 2.5em; font-weight: bold; color: {countdown_color}; text-align: center;'>{format_countdown(seconds_remaining)}</div>",
+            unsafe_allow_html=True
+        )
+        if seconds_remaining < NO_TRADE_SECONDS:
+            st.error("⏰ TRADING DISABLED")
+
+    st.divider()
+
+    # Get prices
+    mid_up, mid_down, ask_up, ask_down = get_prices(client, market["up_token_id"], market["down_token_id"])
+
+    # PAIR COST GAUGE - BIG AND COLORED
+    pair_cost = mid_up + mid_down
+    pair_color = get_pair_cost_color(pair_cost)
+
+    color_hex = {"green": "#00c853", "orange": "#ffc107", "red": "#ff5252"}[pair_color]
+    bg_hex = {"green": "#00c85322", "orange": "#ffc10722", "red": "#ff525222"}[pair_color]
+
+    st.markdown(f"""
+    <div style='background-color: {bg_hex}; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 20px;'>
+        <div style='color: {color_hex}; font-size: 2.5em; font-weight: bold;'>
+            PAIR COST: ${pair_cost:.4f}
+        </div>
+        <div style='color: #888; font-size: 0.9em; margin-top: 5px;'>
+            🟢 &lt; $0.98 good | 🟡 $0.98-0.985 marginal | 🔴 &gt; $0.985 avoid
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Prices row
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("⬆️ UP Mid", f"${mid_up:.4f}", delta=f"Ask: ${ask_up:.4f}")
+
+    with col2:
+        st.metric("⬇️ DOWN Mid", f"${mid_down:.4f}", delta=f"Ask: ${ask_down:.4f}")
+
+    st.divider()
+
+    # POSITION STATS
+    metrics = calculate_metrics(mstate)
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("UP Shares", f"{mstate['shares_up']:.2f}")
+        if mstate['shares_up'] > 0:
+            st.caption(f"Avg: ${metrics['avg_up']:.4f} | Spent: ${mstate['spent_up']:.2f}")
+
+    with col2:
+        st.metric("DOWN Shares", f"{mstate['shares_down']:.2f}")
+        if mstate['shares_down'] > 0:
+            st.caption(f"Avg: ${metrics['avg_down']:.4f} | Spent: ${mstate['spent_down']:.2f}")
+
+    with col3:
+        st.metric("Locked Pairs", f"{metrics['locked_shares']:.2f}")
+        if metrics['locked_profit'] >= 0:
+            st.markdown(f"<span style='color: #00c853; font-size: 1.3em; font-weight: bold;'>+${metrics['locked_profit']:.2f}</span>", unsafe_allow_html=True)
         else:
-            locked_profit = 0
+            st.markdown(f"<span style='color: #ff5252; font-size: 1.3em; font-weight: bold;'>${metrics['locked_profit']:.2f}</span>", unsafe_allow_html=True)
 
-        history_entry = {
-            "market_id": state["current_market_id"][:16] + "...",
-            "question": old_question[:40] + "..." if len(old_question) > 40 else old_question,
-            "end_time": datetime.now(ET).strftime("%H:%M"),
-            "shares_up": round(state["shares_up"], 2),
-            "shares_down": round(state["shares_down"], 2),
-            "locked_profit": round(locked_profit, 2)
-        }
-        state["history"].insert(0, history_entry)
-        state["history"] = state["history"][:20]  # Keep last 20
+    with col4:
+        st.metric("Unbalanced", f"{metrics['unbalanced']:.2f}")
+        if metrics['imbalance_side']:
+            st.caption(f"Heavy: {metrics['imbalance_side'].upper()}")
+        if metrics['unbalanced'] >= WARN_IMBALANCE:
+            st.warning("⚠️ High!")
 
-    # Reset for new market
-    state["current_market_id"] = new_market_id
-    state["shares_up"] = 0.0
-    state["spent_up"] = 0.0
-    state["shares_down"] = 0.0
-    state["spent_down"] = 0.0
-    state["trade_log"] = []
+    # Projected pair cost
+    if mstate['shares_up'] > 0 or mstate['shares_down'] > 0:
+        cheaper_side = "up" if ask_up < ask_down else "down"
+        cheaper_ask = min(ask_up, ask_down)
+        projected = calculate_projected_pair_cost(mstate, 50, cheaper_side, cheaper_ask)
+
+        if projected > 0:
+            proj_color = get_pair_cost_color(projected)
+            proj_hex = {"green": "#00c853", "orange": "#ffc107", "red": "#ff5252"}[proj_color]
+            st.info(f"💡 Buy $50 {cheaper_side.upper()} → new pair cost = **${projected:.4f}**")
+
+    st.divider()
+
+    # BUY BUTTONS
+    st.markdown("### 🛒 Trade")
+
+    if pair_cost > 0.99:
+        st.error("⚠️ Pair cost > $0.99 - Avoid trading!")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**⬆️ Buy UP**")
+        up_disabled = should_disable_button(mstate, "up", seconds_remaining)
+
+        cols = st.columns(len(BUY_AMOUNTS))
+        for i, amount in enumerate(BUY_AMOUNTS):
+            with cols[i]:
+                if st.button(
+                    f"${amount}",
+                    key=f"buy_up_{amount}_{condition_id}",
+                    disabled=up_disabled,
+                    use_container_width=True
+                ):
+                    with st.spinner(f"Buying ${amount} UP..."):
+                        success, msg, filled, cost = execute_market_buy(
+                            client, market["up_token_id"], "up", amount,
+                            mstate, seconds_remaining
+                        )
+                        if success:
+                            st.success(msg)
+                        else:
+                            st.error(msg)
+                        time.sleep(1)
+                        st.rerun()
+
+    with col2:
+        st.markdown("**⬇️ Buy DOWN**")
+        down_disabled = should_disable_button(mstate, "down", seconds_remaining)
+
+        cols = st.columns(len(BUY_AMOUNTS))
+        for i, amount in enumerate(BUY_AMOUNTS):
+            with cols[i]:
+                if st.button(
+                    f"${amount}",
+                    key=f"buy_down_{amount}_{condition_id}",
+                    disabled=down_disabled,
+                    use_container_width=True
+                ):
+                    with st.spinner(f"Buying ${amount} DOWN..."):
+                        success, msg, filled, cost = execute_market_buy(
+                            client, market["down_token_id"], "down", amount,
+                            mstate, seconds_remaining
+                        )
+                        if success:
+                            st.success(msg)
+                        else:
+                            st.error(msg)
+                        time.sleep(1)
+                        st.rerun()
+
+    # Trade log for this market
+    trade_log = mstate.get("trade_log", [])
+    if trade_log:
+        st.divider()
+        st.markdown("**📝 Recent Trades**")
+        df = pd.DataFrame(trade_log[:10])
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 # =============================================================================
@@ -878,23 +1141,10 @@ def main():
     st.markdown("""
     <style>
         .big-font { font-size: 2em !important; font-weight: bold; }
-        .countdown { font-size: 3em; font-weight: bold; text-align: center; }
-        .profit-green { color: #00c853; font-size: 1.5em; font-weight: bold; }
-        .profit-red { color: #ff5252; font-size: 1.5em; font-weight: bold; }
-        .warning-yellow { color: #ffc107; }
-        .pair-green { background-color: #00c85322; padding: 10px; border-radius: 5px; }
-        .pair-yellow { background-color: #ffc10722; padding: 10px; border-radius: 5px; }
-        .pair-red { background-color: #ff525222; padding: 10px; border-radius: 5px; }
+        .profit-green { color: #00c853; }
+        .profit-red { color: #ff5252; }
     </style>
     """, unsafe_allow_html=True)
-
-    # Show wallet address in sidebar
-    try:
-        wallet_addr = get_wallet_address()
-        st.sidebar.success(f"Wallet: {wallet_addr[:8]}...{wallet_addr[-6:]}")
-    except:
-        st.sidebar.error("Invalid private key")
-        st.stop()
 
     # =========================================================================
     # SETUP BUTTON (if allowances not approved)
@@ -921,265 +1171,91 @@ def main():
         st.stop()
 
     # =========================================================================
+    # PROFIT SUMMARY - TOP OF PAGE
+    # =========================================================================
+    active_profit = get_total_locked_profit()
+    history_profit = get_total_history_profit()
+    total_profit = active_profit + history_profit
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if active_profit >= 0:
+            st.markdown(f"<h3 style='color: #00c853;'>Active Locked: +${active_profit:.2f}</h3>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<h3 style='color: #ff5252;'>Active Locked: ${active_profit:.2f}</h3>", unsafe_allow_html=True)
+
+    with col2:
+        if history_profit >= 0:
+            st.markdown(f"<h3 style='color: #888;'>Historical: +${history_profit:.2f}</h3>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<h3 style='color: #ff5252;'>Historical: ${history_profit:.2f}</h3>", unsafe_allow_html=True)
+
+    with col3:
+        if total_profit >= 0:
+            st.markdown(f"<h3 style='color: #1fff9f;'>TOTAL: +${total_profit:.2f}</h3>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<h3 style='color: #ff5252;'>TOTAL: ${total_profit:.2f}</h3>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # =========================================================================
     # MARKET DETECTION
     # =========================================================================
-    market = find_active_bitcoin_market()
+    active_markets = find_all_active_updown_markets()
 
-    if market is None:
-        st.warning("🔍 No active Bitcoin Up/Down market found. Waiting for next window...")
-        st.info("Markets run every 15 minutes, 24/7. Next market should start shortly.")
+    # Archive old markets
+    active_ids = [m["condition_id"] for m in active_markets]
+    archive_old_markets(active_ids)
+
+    if not active_markets:
+        st.markdown("""
+        <div style='background-color: #1a1a2e; padding: 40px; border-radius: 16px; text-align: center; margin: 40px 0;'>
+            <h2 style='color: #ffc107;'>⏳ Waiting for next 15-min windows...</h2>
+            <p style='color: #888; font-size: 1.2em;'>Markets run 24/7 with occasional short gaps between windows.</p>
+            <p style='color: #888;'>Next market should start within a few minutes.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         # Show current time
         now = datetime.now(ET)
         st.metric("Current Time (ET)", now.strftime("%I:%M:%S %p"))
-
-        # Sidebar footer
-        st.sidebar.markdown("---")
-        st.sidebar.caption("gabagool style • Dec 2025 • printing season with the bros")
 
         # Auto-refresh
         time.sleep(5)
         st.rerun()
         return
 
-    # Check if market changed
-    if state["current_market_id"] != market["condition_id"]:
-        old_question = state.get("current_question", "")
-        reset_for_new_market(market["condition_id"], old_question)
-        state["current_question"] = market["question"]
-
-    # Calculate timing
-    seconds_remaining = get_seconds_remaining(market["end_time"])
-
     # =========================================================================
-    # HEADER: Market Info + Countdown
+    # MULTI-MARKET TABS
     # =========================================================================
-    col1, col2 = st.columns([3, 1])
 
-    with col1:
-        st.subheader(market["question"])
-        st.caption(f"Market ID: {market['condition_id'][:20]}...")
+    # Create tab names
+    tab_names = [f"{m['coin']} 15m" for m in active_markets]
 
-    with col2:
-        countdown_color = "#ff5252" if seconds_remaining < NO_TRADE_SECONDS else "#00c853"
-        st.markdown(
-            f"<div class='countdown' style='color: {countdown_color}'>{format_countdown(seconds_remaining)}</div>",
-            unsafe_allow_html=True
-        )
-        if seconds_remaining < NO_TRADE_SECONDS:
-            st.error("⏰ TRADING DISABLED")
-
-    st.divider()
-
-    # =========================================================================
-    # PRICES
-    # =========================================================================
-    mid_up, mid_down, ask_up, ask_down = get_prices(
-        client, market["up_token_id"], market["down_token_id"]
-    )
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric("UP Mid Price", f"${mid_up:.3f}")
-        st.caption(f"Ask: ${ask_up:.3f}")
-
-    with col2:
-        st.metric("DOWN Mid Price", f"${mid_down:.3f}")
-        st.caption(f"Ask: ${ask_down:.3f}")
-
-    with col3:
-        # Live pair cost gauge (using mid prices)
-        pair_cost = mid_up + mid_down
-        pair_color = get_pair_cost_color(pair_cost)
-
-        color_hex = {"green": "#00c853", "orange": "#ffc107", "red": "#ff5252"}[pair_color]
-        bg_class = {"green": "pair-green", "orange": "pair-yellow", "red": "pair-red"}[pair_color]
-
-        st.markdown(f"""
-        <div class='{bg_class}'>
-            <div style='color: {color_hex}; font-size: 1.8em; font-weight: bold;'>
-                Pair Cost: ${pair_cost:.3f}
-            </div>
-            <small>Green &lt; $0.98 | Yellow $0.98-0.985 | Red &gt; $0.985</small>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.divider()
-
-    # =========================================================================
-    # POSITION STATS
-    # =========================================================================
-    st.subheader("📊 Position")
-
-    metrics = calculate_metrics()
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric("UP Shares", f"{state['shares_up']:.2f}")
-        if state['shares_up'] > 0:
-            st.caption(f"Avg: ${metrics['avg_up']:.3f}")
-            st.caption(f"Spent: ${state['spent_up']:.2f}")
-
-    with col2:
-        st.metric("DOWN Shares", f"{state['shares_down']:.2f}")
-        if state['shares_down'] > 0:
-            st.caption(f"Avg: ${metrics['avg_down']:.3f}")
-            st.caption(f"Spent: ${state['spent_down']:.2f}")
-
-    with col3:
-        st.metric("Locked Shares", f"{metrics['locked_shares']:.2f}")
-
-        if metrics['locked_profit'] >= 0:
-            st.markdown(f"<div class='profit-green'>Locked: +${metrics['locked_profit']:.2f}</div>",
-                       unsafe_allow_html=True)
-        else:
-            st.markdown(f"<div class='profit-red'>Locked: ${metrics['locked_profit']:.2f}</div>",
-                       unsafe_allow_html=True)
-
-    with col4:
-        st.metric("Unbalanced", f"{metrics['unbalanced']:.2f}")
-        if metrics['imbalance_side']:
-            st.caption(f"Heavy: {metrics['imbalance_side'].upper()}")
-
-        if metrics['unbalanced'] >= WARN_IMBALANCE:
-            st.warning(f"⚠️ High imbalance!")
-
-    # Projected pair cost
-    if state['shares_up'] > 0 or state['shares_down'] > 0:
-        cheaper_side = "up" if ask_up < ask_down else "down"
-        cheaper_ask = min(ask_up, ask_down)
-        projected = calculate_projected_pair_cost(50, cheaper_side, cheaper_ask)
-
-        if projected > 0:
-            st.info(f"💡 If you buy $50 of {cheaper_side.upper()} now → new pair cost = **${projected:.4f}**")
-
-    st.divider()
-
-    # =========================================================================
-    # BUY BUTTONS
-    # =========================================================================
-    st.subheader("🛒 Trade")
-
-    # Warning for pair cost
-    if pair_cost > 0.99:
-        st.error("⚠️ Pair cost > $0.99 - Avoid trading!")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("**Buy UP**")
-        up_disabled = should_disable_button("up", seconds_remaining)
-
-        cols = st.columns(len(BUY_AMOUNTS))
-        for i, amount in enumerate(BUY_AMOUNTS):
-            with cols[i]:
-                if st.button(
-                    f"${amount}",
-                    key=f"buy_up_{amount}",
-                    disabled=up_disabled,
-                    use_container_width=True
-                ):
-                    with st.spinner(f"Buying ${amount} UP..."):
-                        success, msg, filled, cost = execute_market_buy(
-                            client, market["up_token_id"], "up", amount,
-                            market["condition_id"], seconds_remaining
-                        )
-                        if success:
-                            st.success(msg)
-                        else:
-                            st.error(msg)
-                        time.sleep(1)
-                        st.rerun()
-
-    with col2:
-        st.markdown("**Buy DOWN**")
-        down_disabled = should_disable_button("down", seconds_remaining)
-
-        cols = st.columns(len(BUY_AMOUNTS))
-        for i, amount in enumerate(BUY_AMOUNTS):
-            with cols[i]:
-                if st.button(
-                    f"${amount}",
-                    key=f"buy_down_{amount}",
-                    disabled=down_disabled,
-                    use_container_width=True
-                ):
-                    with st.spinner(f"Buying ${amount} DOWN..."):
-                        success, msg, filled, cost = execute_market_buy(
-                            client, market["down_token_id"], "down", amount,
-                            market["condition_id"], seconds_remaining
-                        )
-                        if success:
-                            st.success(msg)
-                        else:
-                            st.error(msg)
-                        time.sleep(1)
-                        st.rerun()
-
-    st.divider()
-
-    # =========================================================================
-    # WALLET BALANCES
-    # =========================================================================
-    st.subheader("💰 Wallet")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        usdc_balance = get_usdc_balance()
-        if usdc_balance is not None:
-            st.metric("USDC Balance", f"${usdc_balance:.2f}")
-        else:
-            st.metric("USDC Balance", "Error")
-
-    with col2:
-        pol_balance = get_pol_balance()
-        if pol_balance is not None:
-            st.metric("POL (Gas)", f"{pol_balance:.4f}")
-        else:
-            st.metric("POL (Gas)", "Error")
-
-    with col3:
-        st.metric("Wallet", f"{wallet_addr[:8]}...{wallet_addr[-6:]}")
-
-    st.divider()
-
-    # =========================================================================
-    # TRADE LOG
-    # =========================================================================
-    st.subheader("📝 Trade Log")
-
-    trade_log = state.get("trade_log", [])
-    if trade_log:
-        df = pd.DataFrame(trade_log[:20])
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    if len(active_markets) == 1:
+        # Single market - no tabs needed
+        render_market_tab(active_markets[0], client)
     else:
-        st.caption("No trades yet this market")
+        # Multiple markets - use tabs
+        tabs = st.tabs(tab_names)
+
+        for i, tab in enumerate(tabs):
+            with tab:
+                render_market_tab(active_markets[i], client)
 
     # =========================================================================
     # HISTORY
     # =========================================================================
     history = state.get("history", [])
     if history:
-        with st.expander(f"📊 Market History ({len(history)} markets)"):
-            total_profit = get_total_history_profit()
-
-            if total_profit >= 0:
-                st.markdown(f"<div class='profit-green'>Total Historical Profit: +${total_profit:.2f}</div>",
-                           unsafe_allow_html=True)
-            else:
-                st.markdown(f"<div class='profit-red'>Total Historical Profit: ${total_profit:.2f}</div>",
-                           unsafe_allow_html=True)
-
-            st.divider()
-
-            df_history = pd.DataFrame(history[:10])
+        st.divider()
+        with st.expander(f"📊 Market History ({len(history)} completed)"):
+            df_history = pd.DataFrame(history[:20])
             st.dataframe(df_history, use_container_width=True, hide_index=True)
 
     # =========================================================================
-    # REFRESH BUTTON + AUTO-REFRESH
+    # REFRESH
     # =========================================================================
     st.divider()
 
@@ -1187,10 +1263,6 @@ def main():
     with col2:
         if st.button("🔄 Refresh Now", use_container_width=True):
             st.rerun()
-
-    # Sidebar footer
-    st.sidebar.markdown("---")
-    st.sidebar.caption("gabagool style • Dec 2025 • printing season with the bros")
 
     # Auto-refresh
     time.sleep(REFRESH_INTERVAL)
