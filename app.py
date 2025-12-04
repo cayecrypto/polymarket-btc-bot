@@ -790,7 +790,7 @@ MAX_TRADE_PCT = 0.12              # Max 12% of free capital per trade
 MIN_TRADE_USD = 2                 # Minimum trade size (lowered for testing with small bankrolls)
 MAX_TRADE_USD = 100               # Maximum trade size
 MIN_TIME_REMAINING = 90           # Don't trade with less than 90s remaining
-AUTO_TRADE_COOLDOWN = 10          # Minimum seconds between auto trades (rate limit)
+AUTO_TRADE_COOLDOWN = 15          # Minimum seconds between auto trades (rate limit)
 
 ET = pytz.timezone("US/Eastern")
 
@@ -1837,6 +1837,12 @@ def run_auto_mode_cycle(markets: List[Dict], client: ClobClient) -> List[str]:
                 success, msg, cost = execute_auto_trade(trade_info, market, mstate, client)
                 messages.append(msg)
 
+                # Check for 403/rate limit in returned message (not exception)
+                if "403" in msg or "rate" in msg.lower():
+                    # Rate limited - massive backoff (60 seconds)
+                    st.session_state.last_auto_trade_time = time.time() + 60
+                    break
+
                 # ALWAYS update cooldown after any trade attempt (success or failure)
                 st.session_state.last_auto_trade_time = time.time()
 
@@ -1849,14 +1855,9 @@ def run_auto_mode_cycle(markets: List[Dict], client: ClobClient) -> List[str]:
 
             except Exception as e:
                 # Update cooldown on exception too
-                st.session_state.last_auto_trade_time = time.time()
+                st.session_state.last_auto_trade_time = time.time() + 60  # Big backoff on exception
                 error_msg = str(e)
-                if "403" in error_msg or "rate" in error_msg.lower():
-                    # Rate limited - back off extra
-                    st.session_state.last_auto_trade_time = time.time() + 30
-                    messages.append("AUTO: Rate limited, backing off...")
-                else:
-                    messages.append(f"AUTO: Error - {error_msg[:50]}")
+                messages.append(f"AUTO: Error - {error_msg[:50]}")
                 break  # Stop trying on error
 
     return messages
