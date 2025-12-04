@@ -787,7 +787,7 @@ TARGET_PAIR_COST = 0.982          # Stop buying when pair cost <= this
 MIN_IMPROVEMENT_REQUIRED = 0.004  # Only buy if projected pair drops by at least 0.4¢
 MAX_DIRECTIONAL_RISK_PCT = 0.35   # Never risk more than 35% of bankroll directionally
 MAX_TRADE_PCT = 0.12              # Max 12% of free capital per trade
-MIN_TRADE_USD = 8                 # Minimum trade size
+MIN_TRADE_USD = 2                 # Minimum trade size (lowered for testing with small bankrolls)
 MAX_TRADE_USD = 100               # Maximum trade size
 MIN_TIME_REMAINING = 90           # Don't trade with less than 90s remaining
 
