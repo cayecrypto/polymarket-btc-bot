@@ -72,11 +72,22 @@ TERMINAL_CSS = """
         overflow: hidden !important;
     }
 
-    /* HIDE ALL STREAMLIT CHROME */
-    #MainMenu, footer, header {visibility: hidden !important; height: 0 !important;}
+    /* HIDE STREAMLIT CHROME - BUT KEEP SIDEBAR TOGGLE */
+    #MainMenu, footer {visibility: hidden !important; height: 0 !important;}
     .stDeployButton, [data-testid="stToolbar"] {display: none !important;}
     .block-container {padding: 0 !important; max-width: 100% !important;}
-    [data-testid="stHeader"] {display: none !important;}
+
+    /* Keep header for sidebar toggle but make it minimal */
+    [data-testid="stHeader"] {
+        background: transparent !important;
+        height: 40px !important;
+    }
+
+    /* Style the sidebar toggle button */
+    [data-testid="stHeader"] button {
+        color: #00ff6a !important;
+        background: transparent !important;
+    }
 
     /* REMOVE ALL SCROLLING */
     .main, .main > div, [data-testid="stAppViewContainer"] {
@@ -533,6 +544,49 @@ TERMINAL_CSS = """
 
     /* HIDE STREAMLIT ELEMENTS */
     .stSpinner > div {
+        color: #00ff6a !important;
+    }
+
+    /* FILE UPLOADER - DARK THEME */
+    [data-testid="stFileUploader"] {
+        background: #111916 !important;
+        border: 1px solid #1a3025 !important;
+        border-radius: 6px !important;
+    }
+
+    [data-testid="stFileUploader"] section {
+        background: #111916 !important;
+        border: 1px dashed #1a4030 !important;
+        border-radius: 6px !important;
+        padding: 12px !important;
+    }
+
+    [data-testid="stFileUploader"] section > div {
+        color: #5a8a6a !important;
+    }
+
+    [data-testid="stFileUploader"] button {
+        background: linear-gradient(145deg, #0f2018, #142820) !important;
+        border: 1px solid #1a4030 !important;
+        color: #00ff6a !important;
+    }
+
+    [data-testid="stFileUploader"] small {
+        color: #5a8a6a !important;
+    }
+
+    /* File uploader drag text */
+    [data-testid="stFileUploaderDropzone"] {
+        background: #111916 !important;
+        border-color: #1a4030 !important;
+    }
+
+    [data-testid="stFileUploaderDropzone"] span {
+        color: #5a8a6a !important;
+    }
+
+    /* Uploaded file name */
+    [data-testid="stFileUploader"] [data-testid="stMarkdownContainer"] {
         color: #00ff6a !important;
     }
 
