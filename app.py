@@ -82,14 +82,31 @@ TERMINAL_CSS = """
         background: #0a0f0d !important;
         height: auto !important;
         min-height: 2.5rem !important;
+        z-index: 999 !important;
     }
 
-    /* Style the sidebar toggle button - make it VERY visible */
-    [data-testid="stHeader"] button[kind="header"] {
+    /* Style ALL possible sidebar toggle buttons - make them VERY visible */
+    [data-testid="stHeader"] button[kind="header"],
+    [data-testid="collapsedControl"],
+    button[data-testid="stSidebarCollapseButton"],
+    [data-testid="stHeader"] button {
         color: #00ff6a !important;
         background: #0d2818 !important;
         border: 1px solid #1a5c35 !important;
         border-radius: 4px !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+    }
+
+    /* Collapsed sidebar expand button */
+    [data-testid="collapsedControl"] {
+        left: 0.5rem !important;
+        top: 0.5rem !important;
+    }
+
+    [data-testid="collapsedControl"] svg {
+        fill: #00ff6a !important;
+        stroke: #00ff6a !important;
     }
 
     /* Main content area - NO overflow hidden, let content flow */
@@ -1904,18 +1921,42 @@ def main():
 
     # If wallet not connected, show connect prompt in main area
     if not wallet_connected:
+        # Add CSS to make sidebar toggle visible
         st.markdown("""
-        <div style='text-align: center; padding: 150px 20px;'>
+        <style>
+        /* Make sidebar toggle button visible on connect screen */
+        button[data-testid="stBaseButton-headerNoPadding"] {
+            background: #00ff6a !important;
+            color: #0a0f0a !important;
+            border-radius: 6px !important;
+            padding: 8px 16px !important;
+        }
+        section[data-testid="stSidebar"] > div {
+            background: #0a0f0a !important;
+        }
+        </style>
+        <div style='text-align: center; padding: 100px 20px;'>
             <h1 style='color: #00ff6a; font-family: JetBrains Mono; font-weight: 700; font-size: 28px;'>
                 POLYMARKET TERMINAL
             </h1>
             <p style='color: #7a9a8a; font-family: JetBrains Mono; font-size: 14px; margin-top: 20px;'>
-                Connect your wallet in the sidebar to start trading
-            </p>
-            <p style='color: #5a6a5a; font-family: JetBrains Mono; font-size: 11px; margin-top: 30px;'>
-                ← Open sidebar and enter your private key
+                Connect your wallet to start trading
             </p>
         </div>
+        """, unsafe_allow_html=True)
+
+        # Add a visible button to open sidebar
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("CONNECT WALLET", type="primary", use_container_width=True):
+                st.query_params["sidebar"] = "open"
+                st.rerun()
+
+        # Instructions
+        st.markdown("""
+        <p style='text-align: center; color: #5a6a5a; font-family: JetBrains Mono; font-size: 11px; margin-top: 30px;'>
+            Click the button above or use the sidebar arrow (top-left) to connect
+        </p>
         """, unsafe_allow_html=True)
         return  # Exit main() early - don't try to render dashboard
 
