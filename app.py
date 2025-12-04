@@ -208,6 +208,20 @@ MINIMAL_ERC20_ABI = [
     }
 ]
 
+# ERC1155 ABI for Conditional Tokens (setApprovalForAll)
+MINIMAL_ERC1155_ABI = [
+    {
+        "constant": False,
+        "inputs": [
+            {"name": "operator", "type": "address"},
+            {"name": "approved", "type": "bool"}
+        ],
+        "name": "setApprovalForAll",
+        "outputs": [],
+        "type": "function"
+    }
+]
+
 # =============================================================================
 # WEB3 SETUP
 # =============================================================================
@@ -260,8 +274,9 @@ def get_pol_balance() -> Optional[float]:
 
 def approve_all_contracts() -> bool:
     """
-    Approve USDC and Conditional Tokens for all exchange contracts.
+    Approve USDC (ERC20) and Conditional Tokens (ERC1155) for all exchange contracts.
     Must use manual signing for HTTPProvider.
+    USDC uses approve(), CT uses setApprovalForAll().
     """
     if st.session_state.state.get("allowance_approved", False):
         st.info("Allowances already approved!")
@@ -282,52 +297,53 @@ def approve_all_contracts() -> bool:
         )
         ct = web3.eth.contract(
             address=Web3.to_checksum_address(CONDITIONAL_TOKENS),
-            abi=MINIMAL_ERC20_ABI
+            abi=MINIMAL_ERC1155_ABI  # ERC1155 for setApprovalForAll
         )
 
-        st.warning("Sending 6 approval transactions... please wait.")
+        st.warning("Sending approvals — this will take ~15 seconds...")
 
-        approval_count = 0
+        # USDC approvals (ERC20 - keep these)
         for contract_addr in EXCHANGE_CONTRACTS:
-            for token_contract, token_name in [(usdc, "USDC"), (ct, "CT")]:
-                try:
-                    nonce = web3.eth.get_transaction_count(wallet_address)
+            nonce = web3.eth.get_transaction_count(wallet_address)
+            tx = usdc.functions.approve(
+                Web3.to_checksum_address(contract_addr),
+                2**256 - 1
+            ).build_transaction({
+                "chainId": 137,
+                "gas": 120_000,
+                "maxFeePerGas": web3.to_wei(120, "gwei"),
+                "maxPriorityFeePerGas": web3.to_wei(40, "gwei"),
+                "nonce": nonce,
+            })
+            signed_tx = account.sign_transaction(tx)
+            tx_hash = web3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            st.info(f"USDC approval sent → {tx_hash.hex()[:10]}...")
+            web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            time.sleep(1)
 
-                    # High-gas settings for reliable approvals even during Polygon spikes (Dec 2025)
-                    tx = token_contract.functions.approve(
-                        Web3.to_checksum_address(contract_addr),
-                        2**256 - 1  # Unlimited approval
-                    ).build_transaction({
-                        "chainId": 137,
-                        "gas": 120_000,
-                        "maxFeePerGas": web3.to_wei(120, "gwei"),
-                        "maxPriorityFeePerGas": web3.to_wei(40, "gwei"),  # 40 gwei tip guarantees instant confirmation
-                        "nonce": nonce,
-                    })
+        # Conditional Tokens approvals (ERC1155 - use setApprovalForAll)
+        for contract_addr in EXCHANGE_CONTRACTS:
+            nonce = web3.eth.get_transaction_count(wallet_address)
+            tx = ct.functions.setApprovalForAll(
+                Web3.to_checksum_address(contract_addr),
+                True
+            ).build_transaction({
+                "chainId": 137,
+                "gas": 120_000,
+                "maxFeePerGas": web3.to_wei(120, "gwei"),
+                "maxPriorityFeePerGas": web3.to_wei(40, "gwei"),
+                "nonce": nonce,
+            })
+            signed_tx = account.sign_transaction(tx)
+            tx_hash = web3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            st.info(f"CT approval sent → {tx_hash.hex()[:10]}...")
+            web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            time.sleep(1)
 
-                    signed_tx = account.sign_transaction(tx)
-                    tx_hash = web3.eth.send_raw_transaction(signed_tx.raw_transaction)
-                    st.info(f"Sent {token_name} approval -> {tx_hash.hex()[:16]}...")
-
-                    receipt = web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-                    if receipt.status == 1:
-                        st.success(f"Approved {token_name} for {contract_addr[-8:]}")
-                        approval_count += 1
-                    else:
-                        st.error(f"Approval failed for {token_name} -> {contract_addr[-8:]}")
-
-                    time.sleep(1)  # Be nice to RPC
-
-                except Exception as e:
-                    st.error(f"Error approving {token_name} for {contract_addr[-8:]}: {e}")
-
-        if approval_count == 6:
-            st.session_state.state["allowance_approved"] = True
-            st.success("All 6 approvals completed - you are ready to trade!")
-            return True
-        else:
-            st.warning(f"Only {approval_count}/6 approvals succeeded. Try again.")
-            return False
+        st.session_state.state["allowance_approved"] = True
+        st.success("✅ All 6 approvals succeeded — you are now fully live forever!")
+        st.balloons()
+        return True
 
     except Exception as e:
         st.error(f"Approval error: {e}")
