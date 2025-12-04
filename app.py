@@ -1243,49 +1243,61 @@ def approve_all_contracts() -> bool:
 
 def get_clob_client() -> ClobClient:
     """
-    FINAL VERSION - Official API Key Only (No Private Key on Cloud)
-    This is the exact configuration used by $100k+/day Polymarket bots.
-    No 403 errors. No Cloudflare blocks.
+    Production config: Private key for signing + API credentials for Cloudflare bypass.
 
     Required env vars:
+    - POLYMARKET_PRIVATE_KEY (for signing trades)
     - POLYMARKET_API_KEY
     - POLYMARKET_API_SECRET
     - POLYMARKET_API_PASSPHRASE
-    - POLYMARKET_WALLET_ADDRESS (your Polygon wallet address)
     """
     if st.session_state.get("client") is not None:
         return st.session_state.client
 
+    # Get all credentials
+    private_key = os.getenv("POLYMARKET_PRIVATE_KEY", "")
     api_key = os.getenv("POLYMARKET_API_KEY")
     api_secret = os.getenv("POLYMARKET_API_SECRET")
     api_passphrase = os.getenv("POLYMARKET_API_PASSPHRASE")
-    wallet_address = os.getenv("POLYMARKET_WALLET_ADDRESS")
+
+    # Validate required credentials
+    if not private_key:
+        st.error("Missing POLYMARKET_PRIVATE_KEY - required for signing trades")
+        st.stop()
 
     if not all([api_key, api_secret, api_passphrase]):
-        st.error("Missing Polymarket API credentials in Railway variables")
+        st.error("Missing Polymarket API credentials (KEY/SECRET/PASSPHRASE)")
         st.stop()
 
-    if not wallet_address:
-        st.error("Missing POLYMARKET_WALLET_ADDRESS in Railway variables. Add your Polygon wallet address (0x...).")
-        st.stop()
+    # Clean private key
+    pk = private_key.strip()
+    if pk.startswith("0x"):
+        pk = pk[2:]
 
-    # Create client with ONLY API credentials - NO private key
-    # This bypasses Cloudflare completely
-    client = ClobClient(
-        host="https://clob.polymarket.com",
-        chain_id=137,
-        creds=ApiCreds(
-            api_key=api_key,
-            api_secret=api_secret,
-            api_passphrase=api_passphrase
-        )
+    # Create API credentials object
+    creds = ApiCreds(
+        api_key=api_key,
+        api_secret=api_secret,
+        api_passphrase=api_passphrase
     )
 
-    # Store wallet address from env var (API keys can't derive address)
+    # Initialize client with private key for signing
+    client = ClobClient(
+        host="https://clob.polymarket.com",
+        key=pk,
+        chain_id=137,
+        signature_type=2,  # Polygon proxy wallet
+    )
+
+    # CRITICAL: Set API credentials AFTER initialization to bypass Cloudflare
+    client.set_api_creds(creds)
+
+    # Get wallet address from private key
+    wallet_address = client.get_address()
     st.session_state.wallet_address = wallet_address
     st.session_state.wallet_connected = True
     st.session_state.rpc_url = "https://polygon-rpc.com"
-    st.session_state.api_cred_status = "official API"
+    st.session_state.api_cred_status = "API + signing key"
 
     st.session_state.client = client
     return client
