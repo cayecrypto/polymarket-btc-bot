@@ -1246,6 +1246,12 @@ def get_clob_client() -> ClobClient:
     FINAL VERSION - Official API Key Only (No Private Key on Cloud)
     This is the exact configuration used by $100k+/day Polymarket bots.
     No 403 errors. No Cloudflare blocks.
+
+    Required env vars:
+    - POLYMARKET_API_KEY
+    - POLYMARKET_API_SECRET
+    - POLYMARKET_API_PASSPHRASE
+    - POLYMARKET_WALLET_ADDRESS (your Polygon wallet address)
     """
     if st.session_state.get("client") is not None:
         return st.session_state.client
@@ -1253,9 +1259,14 @@ def get_clob_client() -> ClobClient:
     api_key = os.getenv("POLYMARKET_API_KEY")
     api_secret = os.getenv("POLYMARKET_API_SECRET")
     api_passphrase = os.getenv("POLYMARKET_API_PASSPHRASE")
+    wallet_address = os.getenv("POLYMARKET_WALLET_ADDRESS")
 
     if not all([api_key, api_secret, api_passphrase]):
         st.error("Missing Polymarket API credentials in Railway variables")
+        st.stop()
+
+    if not wallet_address:
+        st.error("Missing POLYMARKET_WALLET_ADDRESS in Railway variables. Add your Polygon wallet address (0x...).")
         st.stop()
 
     # Create client with ONLY API credentials - NO private key
@@ -1270,16 +1281,11 @@ def get_clob_client() -> ClobClient:
         )
     )
 
-    # Get wallet address from API key (works with official keys)
-    try:
-        wallet_address = client.get_address()
-        st.session_state.wallet_address = wallet_address
-        st.session_state.wallet_connected = True
-        st.session_state.rpc_url = "https://polygon-rpc.com"
-        st.session_state.api_cred_status = "official API"
-    except Exception as e:
-        st.error(f"Invalid API key or network error: {e}")
-        st.stop()
+    # Store wallet address from env var (API keys can't derive address)
+    st.session_state.wallet_address = wallet_address
+    st.session_state.wallet_connected = True
+    st.session_state.rpc_url = "https://polygon-rpc.com"
+    st.session_state.api_cred_status = "official API"
 
     st.session_state.client = client
     return client
