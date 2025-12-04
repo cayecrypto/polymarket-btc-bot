@@ -77,6 +77,17 @@ TERMINAL_CSS = """
     .stDeployButton, [data-testid="stToolbar"] {display: none !important;}
     .block-container {padding: 1rem !important; max-width: 100% !important;}
 
+    /* DISABLE the dimming/loading overlay on rerun */
+    [data-testid="stAppViewBlockContainer"] > div:first-child > div[data-stale="true"] {
+        opacity: 1 !important;
+    }
+    .stSpinner, [data-testid="stStatusWidget"] {
+        display: none !important;
+    }
+    div[data-stale="true"] {
+        opacity: 1 !important;
+    }
+
     /* Keep header for sidebar toggle but make it minimal and visible */
     [data-testid="stHeader"] {
         background: #0a0f0d !important;
@@ -1849,31 +1860,20 @@ def render_opportunities_panel():
     for i, opp in enumerate(opportunities[:12]):
         is_best = i == best_idx
         best_badge = '<span class="opp-best">BEST</span>' if is_best else ''
+        time_str = opp.get("time", "")
+        coin_str = opp.get("coin", "")
+        pair_val = opp.get("pair_cost", 0)
+        edge_val = opp.get("edge", 0)
 
-        opps_html += f"""
-        <div class="opp-row">
-            <span class="opp-time">{opp.get("time", "")}</span>
-            <span class="opp-coin">{opp.get("coin", "")}</span>
-            <span class="opp-pair">{opp.get("pair_cost", 0):.3f}</span>
-            <span class="opp-edge">edge {opp.get("edge", 0):.1f}%</span>
-            {best_badge}
-        </div>
-        """
+        opps_html += f'<div class="opp-row"><span class="opp-time">{time_str}</span><span class="opp-coin">{coin_str}</span><span class="opp-pair">{pair_val:.3f}</span><span class="opp-edge">edge {edge_val:.1f}%</span>{best_badge}</div>'
 
     # Calculate missed profit estimate
     missed_profit = sum(opp.get("edge", 0) * 10 for opp in opportunities[:12]) / 100  # Assume $10 per opportunity
 
-    return f"""
-    <div class="opportunities-panel">
-        <div class="panel-header">
-            <span class="panel-title">LAST 12 OPPORTUNITIES</span>
-        </div>
-        {opps_html if opps_html else '<div style="color: #5a8a6a; text-align: center; padding: 20px;">No opportunities logged yet</div>'}
-        <div class="missed-profit">
-            Estimated missed if sleeping: <span class="missed-value">+${missed_profit:.2f}</span>
-        </div>
-    </div>
-    """
+    if not opps_html:
+        opps_html = '<div style="color: #5a8a6a; text-align: center; padding: 20px;">No opportunities logged yet</div>'
+
+    return f'<div class="opportunities-panel"><div class="panel-header"><span class="panel-title">LAST 12 OPPORTUNITIES</span></div>{opps_html}<div class="missed-profit">Estimated missed if sleeping: <span class="missed-value">+${missed_profit:.2f}</span></div></div>'
 
 
 def render_bottom_ticker():
