@@ -1229,19 +1229,22 @@ def get_clob_client() -> Optional[ClobClient]:
         )
         # Try derive_api_key first (for already-registered wallets)
         # Falls back to create_or_derive if needed
+        cred_status = "unknown"
         try:
             creds = client.derive_api_key()
-            st.sidebar.success("API creds derived successfully")
+            cred_status = "derived"
         except Exception as e1:
-            st.sidebar.warning(f"derive_api_key failed: {str(e1)[:50]}")
+            cred_status = f"derive failed: {str(e1)[:40]}"
             try:
                 creds = client.create_or_derive_api_creds()
-                st.sidebar.success("API creds created successfully")
+                cred_status = "created"
             except Exception as e2:
-                st.sidebar.error(f"create_or_derive failed: {str(e2)[:50]}")
+                cred_status = f"FAILED: {str(e2)[:40]}"
+                st.session_state.api_cred_status = cred_status
                 raise e2
         client.set_api_creds(creds)
         st.session_state.client = client
+        st.session_state.api_cred_status = cred_status
         return client
     except Exception as e:
         st.error(f"Failed to initialize CLOB client: {e}")
@@ -2115,6 +2118,16 @@ def render_sidebar():
                     <div style='color: #e0e0e0; font-family: JetBrains Mono; font-weight: 700;'>{matic_bal:.3f}</div>
                     <div style='color: #5a8a6a; font-size: 9px;'>MATIC</div>
                 </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Show API credential status
+            api_status = st.session_state.get("api_cred_status", "not initialized")
+            status_color = "#00ff6a" if api_status in ["derived", "created"] else "#ff6b6b"
+            st.markdown(f"""
+            <div style='background: #111916; padding: 8px; border-radius: 6px; border: 1px solid #1a3025; margin-bottom: 12px;'>
+                <div style='color: #5a8a6a; font-size: 9px;'>API CREDS</div>
+                <div style='color: {status_color}; font-size: 10px; font-family: JetBrains Mono;'>{api_status}</div>
             </div>
             """, unsafe_allow_html=True)
 
