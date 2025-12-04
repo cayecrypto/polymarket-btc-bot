@@ -9,4 +9,5 @@ COPY . .
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "streamlit run app.py --server.port=${PORT:-8080} --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false"]
+# Print startup message and run
+CMD ["sh", "-c", "echo 'Container starting...' && python -c 'print(\"Testing imports...\"); import streamlit; import pandas; import web3; print(\"Imports OK\")' && echo 'Starting Streamlit on port ${PORT:-8080}' && streamlit run app.py --server.port=${PORT:-8080} --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false"]
