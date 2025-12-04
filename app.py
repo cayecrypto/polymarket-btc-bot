@@ -506,19 +506,46 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
         market = fetch_market_by_slug(slug)
 
         if market:
-            # Extract token IDs - outcomes array maps to clobTokenIds array
-            token_ids = market.get("clobTokenIds", [])
-            outcomes = market.get("outcomes", ["Up", "Down"])
-            prices = market.get("outcomePrices", ["0.5", "0.5"])
+            import json
+
+            # Extract token IDs - may be array or JSON string
+            token_ids_raw = market.get("clobTokenIds", [])
+            if isinstance(token_ids_raw, str):
+                try:
+                    token_ids = json.loads(token_ids_raw)
+                except:
+                    token_ids = []
+            else:
+                token_ids = token_ids_raw
+
+            # Extract outcomes - may be array or JSON string
+            outcomes_raw = market.get("outcomes", ["Up", "Down"])
+            if isinstance(outcomes_raw, str):
+                try:
+                    outcomes = json.loads(outcomes_raw)
+                except:
+                    outcomes = ["Up", "Down"]
+            else:
+                outcomes = outcomes_raw
+
+            # Extract prices - may be array or JSON string
+            prices_raw = market.get("outcomePrices", ["0.5", "0.5"])
+            if isinstance(prices_raw, str):
+                try:
+                    prices = json.loads(prices_raw)
+                except:
+                    prices = ["0.5", "0.5"]
+            else:
+                prices = prices_raw
 
             if len(token_ids) >= 2 and len(outcomes) >= 2:
                 # Find Up and Down indices from outcomes array
                 up_idx = 0
                 down_idx = 1
                 for i, outcome in enumerate(outcomes):
-                    if outcome.lower() == "up":
+                    if str(outcome).lower() == "up":
                         up_idx = i
-                    elif outcome.lower() == "down":
+                    elif str(outcome).lower() == "down":
                         down_idx = i
 
                 # Parse end time from endDate field
@@ -533,6 +560,17 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
                     except:
                         end_time = None
 
+                # Safely extract prices with fallback
+                try:
+                    up_price = float(prices[up_idx]) if len(prices) > up_idx else 0.5
+                except (ValueError, TypeError):
+                    up_price = 0.5
+
+                try:
+                    down_price = float(prices[down_idx]) if len(prices) > down_idx else 0.5
+                except (ValueError, TypeError):
+                    down_price = 0.5
+
                 return {
                     "condition_id": market.get("conditionId"),
                     "coin": coin.upper(),
@@ -541,8 +579,8 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
                     "end_time": end_time,
                     "up_token_id": token_ids[up_idx],
                     "down_token_id": token_ids[down_idx],
-                    "up_price": float(prices[up_idx]) if len(prices) > up_idx else 0.5,
-                    "down_price": float(prices[down_idx]) if len(prices) > down_idx else 0.5,
+                    "up_price": up_price,
+                    "down_price": down_price,
                     "active": True,
                 }
 
