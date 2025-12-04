@@ -1226,7 +1226,7 @@ def get_clob_client() -> Optional[ClobClient]:
             host=CLOB_HOST,
             key=st.session_state.private_key,
             chain_id=CHAIN_ID,
-            signature_type=0,
+            signature_type=2,  # EOA wallet signature type
             funder=wallet_address
         )
         creds = client.create_or_derive_api_creds()
