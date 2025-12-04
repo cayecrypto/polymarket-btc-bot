@@ -66,49 +66,52 @@ TERMINAL_CSS = """
     }
 
     .stApp {
-        background: linear-gradient(180deg, #0a0f0d 0%, #0d1210 50%, #0a0e0c 100%);
+        background: linear-gradient(180deg, #0a0f0d 0%, #0d1210 50%, #0a0e0c 100%) !important;
         color: #e0e0e0;
         font-family: 'Inter', -apple-system, sans-serif;
-        overflow: hidden !important;
+        min-height: 100vh;
     }
 
     /* HIDE STREAMLIT CHROME - BUT KEEP SIDEBAR TOGGLE */
-    #MainMenu, footer {visibility: hidden !important; height: 0 !important;}
+    #MainMenu, footer {visibility: hidden !important;}
     .stDeployButton, [data-testid="stToolbar"] {display: none !important;}
-    .block-container {padding: 0 !important; max-width: 100% !important;}
+    .block-container {padding: 1rem !important; max-width: 100% !important;}
 
-    /* Keep header for sidebar toggle but make it minimal */
+    /* Keep header for sidebar toggle but make it minimal and visible */
     [data-testid="stHeader"] {
-        background: transparent !important;
-        height: 40px !important;
+        background: #0a0f0d !important;
+        height: auto !important;
+        min-height: 2.5rem !important;
     }
 
-    /* Style the sidebar toggle button */
-    [data-testid="stHeader"] button {
+    /* Style the sidebar toggle button - make it VERY visible */
+    [data-testid="stHeader"] button[kind="header"] {
         color: #00ff6a !important;
+        background: #0d2818 !important;
+        border: 1px solid #1a5c35 !important;
+        border-radius: 4px !important;
+    }
+
+    /* Main content area - NO overflow hidden, let content flow */
+    [data-testid="stAppViewContainer"] {
         background: transparent !important;
     }
 
-    /* REMOVE ALL SCROLLING */
-    .main, .main > div, [data-testid="stAppViewContainer"] {
-        overflow: hidden !important;
-        height: 100vh !important;
+    .main .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 3rem !important;
     }
 
     /* TOP STATS BAR - THIN DARK GREEN */
     .top-bar {
         background: linear-gradient(90deg, #0d2818 0%, #0f3020 50%, #0d2818 100%);
         border-bottom: 1px solid #1a5c35;
-        padding: 8px 24px;
+        border-radius: 8px;
+        padding: 10px 24px;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        z-index: 1000;
-        height: 48px;
+        margin-bottom: 16px;
         box-shadow: 0 2px 20px rgba(0, 80, 40, 0.3);
     }
 
@@ -439,16 +442,12 @@ TERMINAL_CSS = """
 
     /* BOTTOM TICKER */
     .bottom-ticker {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
         background: linear-gradient(90deg, #0d1810 0%, #0f1f18 50%, #0d1810 100%);
-        border-top: 1px solid #1a3025;
-        padding: 6px 0;
+        border: 1px solid #1a3025;
+        border-radius: 8px;
+        padding: 8px 0;
         overflow: hidden;
-        height: 32px;
-        z-index: 1000;
+        margin-top: 16px;
     }
 
     .ticker-content {
@@ -1950,9 +1949,6 @@ def main():
     # Render top bar
     render_top_bar(stats, total_profit)
 
-    # Add spacing for top bar
-    st.markdown("<div style='height: 56px;'></div>", unsafe_allow_html=True)
-
     # Main layout: two columns
     left_col, right_col = st.columns([1, 2])
 
@@ -1981,9 +1977,6 @@ def main():
 
     # Bottom ticker
     render_bottom_ticker()
-
-    # Spacer for bottom ticker
-    st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
 
     # Auto-refresh
     time.sleep(REFRESH_INTERVAL)
