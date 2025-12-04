@@ -1242,28 +1242,35 @@ def get_clob_client() -> Optional[ClobClient]:
         return st.session_state.client
 
     try:
-        # For EOA wallets: use defaults (signature_type=0, no funder)
+        # Check for official API credentials from environment variables
+        api_key = os.environ.get("POLYMARKET_API_KEY")
+        api_secret = os.environ.get("POLYMARKET_API_SECRET")
+        api_passphrase = os.environ.get("POLYMARKET_API_PASSPHRASE")
+
+        if api_key and api_secret and api_passphrase:
+            # Use official API credentials (no Cloudflare issues)
+            client = ClobClient(
+                host=CLOB_HOST,
+                key=api_key,
+                secret=api_secret,
+                passphrase=api_passphrase,
+                chain_id=CHAIN_ID
+            )
+            st.session_state.client = client
+            st.session_state.api_cred_status = "official API"
+            return client
+
+        # Fallback: derive from private key (may hit Cloudflare)
+        if not st.session_state.private_key:
+            st.error("No API credentials or private key configured")
+            return None
+
         client = ClobClient(
             host=CLOB_HOST,
             key=st.session_state.private_key,
             chain_id=CHAIN_ID
         )
 
-        # Add browser-like headers to bypass Cloudflare bot detection
-        browser_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Origin": "https://polymarket.com",
-            "Referer": "https://polymarket.com/",
-        }
-        if hasattr(client, 'session'):
-            client.session.headers.update(browser_headers)
-        if hasattr(client, 'client') and hasattr(client.client, 'session'):
-            client.client.session.headers.update(browser_headers)
-
-        # Try derive_api_key first (for already-registered wallets)
-        # Falls back to create_or_derive if needed
         cred_status = "unknown"
         try:
             creds = client.derive_api_key()
