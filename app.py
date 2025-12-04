@@ -1221,15 +1221,18 @@ def get_clob_client() -> Optional[ClobClient]:
         return st.session_state.client
 
     try:
-        wallet_address = get_wallet_address()
+        # For EOA wallets: use defaults (signature_type=0, no funder)
         client = ClobClient(
             host=CLOB_HOST,
             key=st.session_state.private_key,
-            chain_id=CHAIN_ID,
-            signature_type=2,  # EOA wallet signature type
-            funder=wallet_address
+            chain_id=CHAIN_ID
         )
-        creds = client.create_or_derive_api_creds()
+        # Try derive_api_key first (for already-registered wallets)
+        # Falls back to create_or_derive if needed
+        try:
+            creds = client.derive_api_key()
+        except Exception:
+            creds = client.create_or_derive_api_creds()
         client.set_api_creds(creds)
         st.session_state.client = client
         return client
