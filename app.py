@@ -1231,8 +1231,15 @@ def get_clob_client() -> Optional[ClobClient]:
         # Falls back to create_or_derive if needed
         try:
             creds = client.derive_api_key()
-        except Exception:
-            creds = client.create_or_derive_api_creds()
+            st.sidebar.success("API creds derived successfully")
+        except Exception as e1:
+            st.sidebar.warning(f"derive_api_key failed: {str(e1)[:50]}")
+            try:
+                creds = client.create_or_derive_api_creds()
+                st.sidebar.success("API creds created successfully")
+            except Exception as e2:
+                st.sidebar.error(f"create_or_derive failed: {str(e2)[:50]}")
+                raise e2
         client.set_api_creds(creds)
         st.session_state.client = client
         return client
