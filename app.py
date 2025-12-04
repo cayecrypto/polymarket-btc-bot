@@ -463,28 +463,9 @@ SLUG_COINS = ["btc", "eth", "sol", "xrp"]
 def get_current_15m_timestamp() -> int:
     """
     Get the Unix timestamp for the current 15-minute window start.
-    15-min markets align to 15-minute boundaries (900 seconds).
+    MUST use integer division: (time // 900) * 900
     """
-    now = int(time.time())
-    return (now // 900) * 900
-
-
-def generate_candidate_slugs() -> List[str]:
-    """
-    Generate slug candidates for current and nearby windows.
-    Checks multiple windows to catch markets that just started or are about to end.
-    """
-    base_ts = get_current_15m_timestamp()
-    slugs = []
-
-    # Check current window, previous 2 windows, and next window
-    # This catches markets in various states of their lifecycle
-    for offset in [-1800, -900, 0, 900]:  # -30min, -15min, now, +15min
-        ts = base_ts + offset
-        for coin in SLUG_COINS:
-            slugs.append(f"{coin}-updown-15m-{ts}")
-
-    return slugs
+    return int(time.time() // 900 * 900)
 
 
 def fetch_market_by_slug(slug: str) -> Optional[Dict]:
@@ -493,10 +474,10 @@ def fetch_market_by_slug(slug: str) -> Optional[Dict]:
     Returns the market dict if found and active, None otherwise.
     """
     try:
+        # MUST use exactly this URL format - no other parameters
         response = requests.get(
             f"{GAMMA_API_HOST}/markets?slug={slug}",
-            timeout=10,
-            headers={"Accept": "application/json"}
+            timeout=10
         )
         if response.status_code == 200:
             data = response.json()
@@ -510,34 +491,28 @@ def fetch_market_by_slug(slug: str) -> Optional[Dict]:
         return None
 
 
-def find_all_active_updown_markets() -> List[Dict]:
+def find_active_market_for_coin(coin: str) -> Optional[Dict]:
     """
-    Find all active 15-min Up/Down markets by querying Gamma API.
-    Uses timestamp-based slug generation since these markets aren't in general listings.
+    Find active market for a specific coin by checking 3 timestamps.
+    Order: current, next (+900), previous (-900) - catches lagging/early markets.
     """
-    active_markets = []
-    seen_condition_ids = set()  # Avoid duplicates
+    current_ts = get_current_15m_timestamp()
 
-    candidate_slugs = generate_candidate_slugs()
+    # Check in this exact order: current, next, previous
+    timestamps_to_check = [current_ts, current_ts + 900, current_ts - 900]
 
-    for slug in candidate_slugs:
+    for ts in timestamps_to_check:
+        slug = f"{coin}-updown-15m-{ts}"
         market = fetch_market_by_slug(slug)
+
         if market:
-            condition_id = market.get("conditionId")
-
-            # Skip if we already found this market
-            if condition_id in seen_condition_ids:
-                continue
-            seen_condition_ids.add(condition_id)
-
-            # Extract token IDs from clobTokenIds array
-            # First token is Up, second is Down (based on outcomes array order)
+            # Extract token IDs - outcomes array maps to clobTokenIds array
             token_ids = market.get("clobTokenIds", [])
             outcomes = market.get("outcomes", ["Up", "Down"])
             prices = market.get("outcomePrices", ["0.5", "0.5"])
 
-            if len(token_ids) >= 2:
-                # Determine which index is Up vs Down
+            if len(token_ids) >= 2 and len(outcomes) >= 2:
+                # Find Up and Down indices from outcomes array
                 up_idx = 0
                 down_idx = 1
                 for i, outcome in enumerate(outcomes):
@@ -558,26 +533,56 @@ def find_all_active_updown_markets() -> List[Dict]:
                     except:
                         end_time = None
 
-                # Extract coin from slug (e.g., "btc-updown-15m-123" -> "BTC")
-                coin = slug.split("-")[0].upper()
-
-                active_markets.append({
-                    "condition_id": condition_id,
-                    "coin": coin,
-                    "question": market.get("question", f"{coin} Up or Down"),
+                return {
+                    "condition_id": market.get("conditionId"),
+                    "coin": coin.upper(),
+                    "question": market.get("question", f"{coin.upper()} Up or Down"),
                     "slug": slug,
                     "end_time": end_time,
                     "up_token_id": token_ids[up_idx],
                     "down_token_id": token_ids[down_idx],
                     "up_price": float(prices[up_idx]) if len(prices) > up_idx else 0.5,
                     "down_price": float(prices[down_idx]) if len(prices) > down_idx else 0.5,
-                })
+                    "active": True,
+                }
+
+    # No active market found for this coin
+    return None
+
+
+def find_all_active_updown_markets() -> List[Dict]:
+    """
+    Find all active 15-min Up/Down markets by querying Gamma API.
+    Always returns entries for all 4 coins (some may be waiting for next window).
+    Timestamps are refreshed every call - never cached.
+    """
+    all_markets = []
+
+    for coin in SLUG_COINS:
+        market = find_active_market_for_coin(coin)
+
+        if market:
+            all_markets.append(market)
+        else:
+            # No active market - create placeholder for "waiting" state
+            all_markets.append({
+                "condition_id": None,
+                "coin": coin.upper(),
+                "question": f"{coin.upper()} Up or Down - Waiting for next window...",
+                "slug": None,
+                "end_time": None,
+                "up_token_id": None,
+                "down_token_id": None,
+                "up_price": 0.5,
+                "down_price": 0.5,
+                "active": False,  # Flag to indicate waiting state
+            })
 
     # Sort by coin name for consistent tab order
     coin_order = {"BTC": 0, "ETH": 1, "SOL": 2, "XRP": 3}
-    active_markets.sort(key=lambda x: coin_order.get(x.get("coin", "ZZZ"), 99))
+    all_markets.sort(key=lambda x: coin_order.get(x.get("coin", "ZZZ"), 99))
 
-    return active_markets
+    return all_markets
 
 
 def get_seconds_remaining(end_time) -> int:
@@ -999,8 +1004,25 @@ def get_total_history_profit() -> float:
 
 def render_market_tab(market: Dict, client: ClobClient):
     """Render the full dashboard for a single market inside its tab."""
-    condition_id = market["condition_id"]
     coin = market["coin"]
+
+    # Check if market is in "waiting" state (no active market found)
+    if not market.get("active", False) or market.get("condition_id") is None:
+        st.markdown(f"""
+        <div style='background-color: #1a1a2e; padding: 50px; border-radius: 20px; text-align: center; margin: 40px 0;'>
+            <h2 style='color: #ffc107; margin-bottom: 20px;'>⏳ {coin} - Waiting for next window...</h2>
+            <p style='color: #888; font-size: 1.3em;'>Next 15-minute market starting soon!</p>
+            <p style='color: #666; font-size: 1em; margin-top: 15px;'>Markets refresh every 15 minutes.</p>
+            <p style='color: #555; font-size: 0.9em; margin-top: 10px;'>Short gaps between windows are normal during oracle finalization.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Show current time
+        now = datetime.now(ET)
+        st.metric("Current Time (ET)", now.strftime("%I:%M:%S %p"))
+        return
+
+    condition_id = market["condition_id"]
     mstate = get_market_state(condition_id, coin)
 
     seconds_remaining = get_seconds_remaining(market.get("end_time"))
@@ -1239,50 +1261,32 @@ def main():
     st.divider()
 
     # =========================================================================
-    # MARKET DETECTION - BULLETPROOF
+    # MARKET DETECTION - GAMMA API
     # =========================================================================
-    active_markets = find_all_active_updown_markets()
+    all_markets = find_all_active_updown_markets()
 
-    # Archive old markets
-    active_ids = [m["condition_id"] for m in active_markets]
+    # Archive old markets (only those with valid condition_ids)
+    active_ids = [m["condition_id"] for m in all_markets if m.get("condition_id")]
     archive_old_markets(active_ids)
 
-    if not active_markets:
-        st.markdown("""
-        <div style='background-color: #1a1a2e; padding: 50px; border-radius: 20px; text-align: center; margin: 40px 0;'>
-            <h2 style='color: #ffc107; margin-bottom: 20px;'>🔍 Scanning for 15-min markets...</h2>
-            <p style='color: #888; font-size: 1.3em;'>Markets run 24/7 — next window starting any second!</p>
-            <p style='color: #666; font-size: 1em; margin-top: 15px;'>BTC • ETH • SOL • XRP refresh every 15 minutes</p>
-            <p style='color: #555; font-size: 0.9em; margin-top: 10px;'>Short gaps between windows are normal during oracle finalization.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Show current time
-        now = datetime.now(ET)
-        st.metric("Current Time (ET)", now.strftime("%I:%M:%S %p"))
-
-        # Auto-refresh faster when waiting
-        time.sleep(3)
-        st.rerun()
-        return
-
     # =========================================================================
-    # MULTI-MARKET TABS
+    # MULTI-MARKET TABS - ALWAYS SHOW ALL 4 COINS
     # =========================================================================
 
-    # Create tab names
-    tab_names = [f"{m['coin']} 15m" for m in active_markets]
+    # Create tab names with status indicator
+    tab_names = []
+    for m in all_markets:
+        if m.get("active", False):
+            tab_names.append(f"🟢 {m['coin']} 15m")
+        else:
+            tab_names.append(f"⏳ {m['coin']} 15m")
 
-    if len(active_markets) == 1:
-        # Single market - no tabs needed
-        render_market_tab(active_markets[0], client)
-    else:
-        # Multiple markets - use tabs
-        tabs = st.tabs(tab_names)
+    # Always use tabs for all 4 coins
+    tabs = st.tabs(tab_names)
 
-        for i, tab in enumerate(tabs):
-            with tab:
-                render_market_tab(active_markets[i], client)
+    for i, tab in enumerate(tabs):
+        with tab:
+            render_market_tab(all_markets[i], client)
 
     # =========================================================================
     # HISTORY
