@@ -20,6 +20,7 @@ gabagool style - Dec 2025 - 4X PRINTING SEASON with the bros
 ================================================================================
 """
 
+import os
 import time
 import json
 import base64
@@ -2599,6 +2600,10 @@ def render_auto_log():
 
 def main():
     """Main god-mode terminal."""
+
+    # Railway deployment detection
+    if os.environ.get("RAILWAY_ENVIRONMENT"):
+        st.sidebar.success("🚂 Railway deployment active")
 
     # Sidebar wallet
     wallet_connected = render_sidebar()
