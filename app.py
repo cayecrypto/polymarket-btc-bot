@@ -1248,19 +1248,32 @@ def get_clob_client() -> Optional[ClobClient]:
         api_passphrase = os.environ.get("POLYMARKET_API_PASSPHRASE")
 
         if api_key and api_secret and api_passphrase:
-            # FINAL FIX: Use official API credentials ONLY - no private key!
-            # This bypasses Cloudflare completely by not triggering any signing
+            # Create API credentials object
             creds = ApiCreds(
                 api_key=api_key,
                 api_secret=api_secret,
                 api_passphrase=api_passphrase
             )
-            # Create client with ONLY chain_id - NO private key, NO signature_type
-            # The API credentials handle all authentication
+
+            # Get private key for signing orders
+            env_private_key = os.environ.get("POLYMARKET_PRIVATE_KEY")
+            if not env_private_key:
+                st.error("POLYMARKET_PRIVATE_KEY required for order signing")
+                return None
+
+            pk = env_private_key.strip()
+            if not pk.startswith("0x"):
+                pk = "0x" + pk
+
+            # Create client WITH private key (needed for signing orders)
+            # But immediately set API creds so it doesn't try to derive new ones
             client = ClobClient(
                 host=CLOB_HOST,
+                key=pk,
                 chain_id=CHAIN_ID
             )
+            # Set API creds BEFORE any API calls - this prevents credential derivation
+            # which is what triggers Cloudflare 403 errors
             client.set_api_creds(creds)
             st.session_state.client = client
             st.session_state.api_cred_status = "official API"
