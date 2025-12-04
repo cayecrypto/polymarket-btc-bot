@@ -38,7 +38,7 @@ from eth_account import Account
 
 # py-clob-client imports
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OrderArgs, ApiCreds
+from py_clob_client.clob_types import OrderArgs
 
 # Monkey-patch httpx to add browser headers (bypass Cloudflare)
 import httpx
@@ -1089,12 +1089,8 @@ def get_web3() -> Web3:
 
 
 def get_wallet_address() -> str:
-    """Get wallet address from API client (no private key needed)"""
-    if st.session_state.get("wallet_address"):
-        return st.session_state.wallet_address
-    # Fallback: get from client
-    client = get_clob_client()
-    return client.get_address()
+    account = Account.from_key(st.session_state.private_key)
+    return account.address
 
 
 def get_usdc_balance() -> Optional[float]:
@@ -1241,66 +1237,60 @@ def approve_all_contracts() -> bool:
 # CLOB CLIENT
 # =============================================================================
 
-def get_clob_client() -> ClobClient:
-    """
-    Production config: Private key for signing + API credentials for Cloudflare bypass.
-
-    Required env vars:
-    - POLYMARKET_PRIVATE_KEY (for signing trades)
-    - POLYMARKET_API_KEY
-    - POLYMARKET_API_SECRET
-    - POLYMARKET_API_PASSPHRASE
-    """
-    if st.session_state.get("client") is not None:
+def get_clob_client() -> Optional[ClobClient]:
+    if st.session_state.client is not None:
         return st.session_state.client
 
-    # Get all credentials
-    private_key = os.getenv("POLYMARKET_PRIVATE_KEY", "")
-    api_key = os.getenv("POLYMARKET_API_KEY")
-    api_secret = os.getenv("POLYMARKET_API_SECRET")
-    api_passphrase = os.getenv("POLYMARKET_API_PASSPHRASE")
+    try:
+        # Check for official API credentials from environment variables
+        api_key = os.environ.get("POLYMARKET_API_KEY")
+        api_secret = os.environ.get("POLYMARKET_API_SECRET")
+        api_passphrase = os.environ.get("POLYMARKET_API_PASSPHRASE")
 
-    # Validate required credentials
-    if not private_key:
-        st.error("Missing POLYMARKET_PRIVATE_KEY - required for signing trades")
-        st.stop()
+        if api_key and api_secret and api_passphrase:
+            # Use official API credentials (no Cloudflare issues)
+            client = ClobClient(
+                host=CLOB_HOST,
+                key=api_key,
+                secret=api_secret,
+                passphrase=api_passphrase,
+                chain_id=CHAIN_ID
+            )
+            st.session_state.client = client
+            st.session_state.api_cred_status = "official API"
+            return client
 
-    if not all([api_key, api_secret, api_passphrase]):
-        st.error("Missing Polymarket API credentials (KEY/SECRET/PASSPHRASE)")
-        st.stop()
+        # Fallback: derive from private key (may hit Cloudflare)
+        if not st.session_state.private_key:
+            st.error("No API credentials or private key configured")
+            return None
 
-    # Clean private key
-    pk = private_key.strip()
-    if pk.startswith("0x"):
-        pk = pk[2:]
+        client = ClobClient(
+            host=CLOB_HOST,
+            key=st.session_state.private_key,
+            chain_id=CHAIN_ID
+        )
 
-    # Create API credentials object
-    creds = ApiCreds(
-        api_key=api_key,
-        api_secret=api_secret,
-        api_passphrase=api_passphrase
-    )
-
-    # Initialize client with private key for signing
-    client = ClobClient(
-        host="https://clob.polymarket.com",
-        key=pk,
-        chain_id=137,
-        signature_type=2,  # Polygon proxy wallet
-    )
-
-    # CRITICAL: Set API credentials AFTER initialization to bypass Cloudflare
-    client.set_api_creds(creds)
-
-    # Get wallet address from private key
-    wallet_address = client.get_address()
-    st.session_state.wallet_address = wallet_address
-    st.session_state.wallet_connected = True
-    st.session_state.rpc_url = "https://polygon-rpc.com"
-    st.session_state.api_cred_status = "API + signing key"
-
-    st.session_state.client = client
-    return client
+        cred_status = "unknown"
+        try:
+            creds = client.derive_api_key()
+            cred_status = "derived"
+        except Exception as e1:
+            cred_status = f"derive failed: {str(e1)[:40]}"
+            try:
+                creds = client.create_or_derive_api_creds()
+                cred_status = "created"
+            except Exception as e2:
+                cred_status = f"FAILED: {str(e2)[:40]}"
+                st.session_state.api_cred_status = cred_status
+                raise e2
+        client.set_api_creds(creds)
+        st.session_state.client = client
+        st.session_state.api_cred_status = cred_status
+        return client
+    except Exception as e:
+        st.error(f"Failed to initialize CLOB client: {e}")
+        return None
 
 
 # =============================================================================
@@ -2120,51 +2110,104 @@ def render_sidebar():
         </div>
         """, unsafe_allow_html=True)
 
-        # Auto-connect with official API - no private key needed on cloud
+        # Check if official API credentials are set - auto-connect if so
         api_key = os.environ.get("POLYMARKET_API_KEY")
         api_secret = os.environ.get("POLYMARKET_API_SECRET")
         api_passphrase = os.environ.get("POLYMARKET_API_PASSPHRASE")
+        env_private_key = os.environ.get("POLYMARKET_PRIVATE_KEY")
 
-        if not all([api_key, api_secret, api_passphrase]):
-            st.error("Missing API credentials in Railway")
-            st.info("Set POLYMARKET_API_KEY, POLYMARKET_API_SECRET, POLYMARKET_API_PASSPHRASE")
-            return False
+        if api_key and api_secret and api_passphrase and not st.session_state.wallet_connected:
+            # Auto-connect with official API
+            st.session_state.wallet_connected = True
+            st.session_state.rpc_url = "https://polygon-rpc.com"
+            st.session_state.api_cred_status = "official API"
+            # Also set private key from env if available (for balance queries)
+            if env_private_key:
+                pk = env_private_key.strip()
+                if not pk.startswith("0x"):
+                    pk = "0x" + pk
+                st.session_state.private_key = pk
 
-        # Initialize client and get wallet address (this handles everything)
+        if not st.session_state.wallet_connected:
+            private_key_input = st.text_input(
+                "Private Key",
+                type="password",
+                help="Hot wallet only"
+            )
+
+            rpc_url_input = st.text_input(
+                "RPC URL",
+                value="https://polygon-rpc.com"
+            )
+
+            if st.button("CONNECT", type="primary", use_container_width=True):
+                pk = private_key_input.strip()
+                if not pk.startswith("0x"):
+                    pk = "0x" + pk
+
+                if len(pk) == 66:
+                    try:
+                        Account.from_key(pk)
+                        st.session_state.private_key = pk
+                        st.session_state.rpc_url = rpc_url_input
+                        st.session_state.wallet_connected = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Invalid: {e}")
+                else:
+                    st.error("64 hex chars required")
+
+            return False  # Signal wallet not connected
+
         try:
-            client = get_clob_client()
-            wallet_addr = st.session_state.wallet_address
-            display_addr = f"{wallet_addr[:6]}...{wallet_addr[-4:]}"
-        except Exception as e:
-            st.error(f"Connection failed: {e}")
-            return False
+            # Check if using official API
+            api_key = os.environ.get("POLYMARKET_API_KEY")
+            using_official_api = bool(api_key and os.environ.get("POLYMARKET_API_SECRET"))
 
-        # Get balance using wallet address from API
-        usdc_bal = get_usdc_balance() or 0
-        matic_bal = get_matic_balance() or 0
+            # Check if we have a private key for balance queries (either from manual input or env var)
+            has_private_key = bool(st.session_state.get("private_key"))
 
-        st.markdown(f"""
-        <div style='background: #111916; padding: 12px; border-radius: 6px; border: 1px solid #1a3025; margin-bottom: 12px;'>
-            <div style='color: #00ff6a; font-size: 10px; letter-spacing: 1px;'>CONNECTED (API)</div>
-            <div style='font-family: JetBrains Mono; font-size: 11px; color: #7a9a8a;'>{display_addr}</div>
-        </div>
-        """, unsafe_allow_html=True)
+            if has_private_key:
+                # Can query balance with private key
+                wallet_addr = get_wallet_address()
+                usdc_bal = get_usdc_balance() or 0
+                matic_bal = get_matic_balance() or 0
+                display_addr = f"{wallet_addr[:6]}...{wallet_addr[-4:]}"
+                if using_official_api:
+                    display_addr += " (API)"
+            elif using_official_api:
+                # Official API without private key - can't query balance
+                wallet_addr = "API Mode"
+                usdc_bal = 0
+                matic_bal = 0
+                display_addr = "Official API (no balance)"
+            else:
+                wallet_addr = get_wallet_address()
+                usdc_bal = get_usdc_balance() or 0
+                matic_bal = get_matic_balance() or 0
+                display_addr = f"{wallet_addr[:6]}...{wallet_addr[-4:]}"
 
-        # Show balance
-        st.markdown(f"""
-        <div style='display: flex; gap: 8px; margin-bottom: 12px;'>
-            <div style='flex: 1; background: #111916; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #1a3025;'>
-                <div style='color: #00ff6a; font-family: JetBrains Mono; font-weight: 700;'>${usdc_bal:.2f}</div>
-                <div style='color: #5a8a6a; font-size: 9px;'>USDC</div>
+            st.markdown(f"""
+            <div style='background: #111916; padding: 12px; border-radius: 6px; border: 1px solid #1a3025; margin-bottom: 12px;'>
+                <div style='color: #00ff6a; font-size: 10px; letter-spacing: 1px;'>CONNECTED</div>
+                <div style='font-family: JetBrains Mono; font-size: 11px; color: #7a9a8a;'>{display_addr}</div>
             </div>
-            <div style='flex: 1; background: #111916; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #1a3025;'>
-                <div style='color: #e0e0e0; font-family: JetBrains Mono; font-weight: 700;'>{matic_bal:.3f}</div>
-                <div style='color: #5a8a6a; font-size: 9px;'>MATIC</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
-        try:
+            # Show balance if we have a private key (can query on-chain)
+            if has_private_key:
+                st.markdown(f"""
+                <div style='display: flex; gap: 8px; margin-bottom: 12px;'>
+                    <div style='flex: 1; background: #111916; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #1a3025;'>
+                        <div style='color: #00ff6a; font-family: JetBrains Mono; font-weight: 700;'>${usdc_bal:.2f}</div>
+                        <div style='color: #5a8a6a; font-size: 9px;'>USDC</div>
+                    </div>
+                    <div style='flex: 1; background: #111916; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #1a3025;'>
+                        <div style='color: #e0e0e0; font-family: JetBrains Mono; font-weight: 700;'>{matic_bal:.3f}</div>
+                        <div style='color: #5a8a6a; font-size: 9px;'>MATIC</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
             # Show API credential status
             api_status = st.session_state.get("api_cred_status", "not initialized")
