@@ -1,10 +1,10 @@
 """
 ================================================================================
-POLYMARKET 15-MIN COMBO BOT — MULTI-MARKET EDITION (BTC • ETH • SOL • XRP)
+POLYMARKET 15-MIN COMBO PRINTER — PROFESSIONAL TRADING DASHBOARD
 ================================================================================
 
-A Streamlit-based manual trading bot for Polymarket's Up/Down 15-minute
-prediction markets using the "gabagool-style" combo/hedge arbitrage strategy.
+A professional-grade Streamlit trading dashboard for Polymarket's Up/Down
+15-minute prediction markets using the "gabagool-style" combo/hedge strategy.
 
 SUPPORTED MARKETS:
     - Bitcoin (BTC)
@@ -30,6 +30,7 @@ REQUIREMENTS.TXT:
     python-dateutil>=2.8.0
     pandas>=2.0.0
     eth-account>=0.10.0
+    plotly>=5.18.0
 
 STRATEGY:
     Buy both UP and DOWN tokens to lock in guaranteed profit when pair cost < $1.
@@ -41,13 +42,18 @@ gabagool style - Dec 2025 - 4X PRINTING SEASON with the bros
 """
 
 import time
+import json
+import base64
 from datetime import datetime
 from typing import Optional, Dict, Any, Tuple, List
+from io import BytesIO
 
 import streamlit as st
 import requests
 import pytz
 import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
 from web3 import Web3
 from eth_account import Account
 
@@ -60,23 +66,395 @@ from py_clob_client.clob_types import OrderArgs
 # =============================================================================
 
 st.set_page_config(
-    page_title="Polymarket 15-Min Combo Bot",
-    page_icon="🔥",
+    page_title="Polymarket 15-Min Combo Printer",
+    page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # =============================================================================
-# HEADER BANNER
+# DARK THEME CSS - PROFESSIONAL TRADING DASHBOARD
 # =============================================================================
 
-st.markdown("""
-<div style="background: linear-gradient(90deg, #ff6b35, #f7c531, #1fff9f, #00c8ff); padding: 25px; border-radius: 16px; text-align: center; margin-bottom: 30px; box-shadow: 0 6px 30px rgba(0,0,0,0.3);">
-    <h1 style="color: black; margin:0; font-size: 2.5em; text-shadow: 1px 1px 2px rgba(255,255,255,0.3);">🔥 POLYMARKET 15-MIN COMBO BOT 🔥</h1>
-    <p style="color: black; margin:10px 0 0 0; font-size: 1.5em; font-weight: bold;">NOW 4X PRINTING (BTC • ETH • SOL • XRP)</p>
-    <p style="color: black; margin:8px 0; font-size: 1.1em;">Each tab = independent wallet • Multi-market simultaneous trading • Keep open 24/7</p>
-</div>
-""", unsafe_allow_html=True)
+DARK_THEME_CSS = """
+<style>
+    /* Global Dark Theme */
+    .stApp {
+        background-color: #0e1117;
+    }
+
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* Main container */
+    .main .block-container {
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+        max-width: 100%;
+    }
+
+    /* Custom card styling */
+    .pro-card {
+        background: linear-gradient(145deg, #161a22, #1a1f2a);
+        border: 1px solid #2d333b;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 10px 0;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+
+    .pro-card-header {
+        background: linear-gradient(90deg, #161a22, #1e242e);
+        border: 1px solid #2d333b;
+        border-radius: 12px 12px 0 0;
+        padding: 15px 20px;
+        margin: -20px -20px 15px -20px;
+        border-bottom: 1px solid #2d333b;
+    }
+
+    /* Header bar */
+    .header-bar {
+        background: linear-gradient(180deg, #161a22, #0e1117);
+        border-bottom: 2px solid #00c853;
+        padding: 15px 30px;
+        margin: -1rem -1rem 1rem -1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .header-title {
+        color: #00c853;
+        font-size: 1.8em;
+        font-weight: 700;
+        letter-spacing: 2px;
+        text-shadow: 0 0 20px rgba(0,200,83,0.3);
+    }
+
+    .header-stats {
+        display: flex;
+        gap: 40px;
+    }
+
+    .header-stat {
+        text-align: center;
+    }
+
+    .header-stat-value {
+        font-size: 1.5em;
+        font-weight: bold;
+        color: #00c853;
+    }
+
+    .header-stat-label {
+        font-size: 0.75em;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    /* Market cards */
+    .market-card {
+        background: linear-gradient(145deg, #161a22, #1a1f2a);
+        border: 1px solid #2d333b;
+        border-radius: 16px;
+        padding: 20px;
+        text-align: center;
+        transition: all 0.3s ease;
+        height: 100%;
+    }
+
+    .market-card:hover {
+        border-color: #00c853;
+        box-shadow: 0 0 30px rgba(0,200,83,0.2);
+    }
+
+    .market-card-active {
+        border-left: 4px solid #00c853;
+    }
+
+    .market-card-waiting {
+        border-left: 4px solid #ffc107;
+        opacity: 0.7;
+    }
+
+    .coin-symbol {
+        font-size: 2.5em;
+        font-weight: 800;
+        margin-bottom: 5px;
+    }
+
+    .coin-btc { color: #f7931a; }
+    .coin-eth { color: #627eea; }
+    .coin-sol { color: #00ffa3; }
+    .coin-xrp { color: #23292f; background: linear-gradient(135deg, #fff, #888); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+    /* Gauge styling */
+    .gauge-container {
+        position: relative;
+        width: 120px;
+        height: 120px;
+        margin: 10px auto;
+    }
+
+    /* Profit/Loss colors */
+    .profit-positive {
+        color: #00c853 !important;
+        text-shadow: 0 0 10px rgba(0,200,83,0.5);
+    }
+
+    .profit-negative {
+        color: #ff5252 !important;
+        text-shadow: 0 0 10px rgba(255,82,82,0.5);
+    }
+
+    /* Big number display */
+    .big-number {
+        font-size: 3em;
+        font-weight: 800;
+        line-height: 1;
+    }
+
+    .big-number-label {
+        font-size: 0.8em;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        margin-top: 5px;
+    }
+
+    /* Table styling */
+    .pro-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: 'SF Mono', 'Monaco', monospace;
+    }
+
+    .pro-table th {
+        background: #161a22;
+        color: #888;
+        padding: 12px;
+        text-align: left;
+        font-size: 0.75em;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        border-bottom: 2px solid #2d333b;
+    }
+
+    .pro-table td {
+        padding: 12px;
+        border-bottom: 1px solid #2d333b;
+        color: #fff;
+    }
+
+    .pro-table tr:hover {
+        background: #1a1f2a;
+    }
+
+    /* Button styling */
+    .stButton > button {
+        background: linear-gradient(145deg, #1e242e, #161a22);
+        border: 1px solid #2d333b;
+        color: #fff;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+
+    .stButton > button:hover {
+        border-color: #00c853;
+        box-shadow: 0 0 20px rgba(0,200,83,0.3);
+    }
+
+    /* Buy buttons */
+    .buy-up-btn {
+        background: linear-gradient(145deg, #1b5e20, #2e7d32) !important;
+        border-color: #4caf50 !important;
+    }
+
+    .buy-down-btn {
+        background: linear-gradient(145deg, #b71c1c, #c62828) !important;
+        border-color: #f44336 !important;
+    }
+
+    /* Tab styling */
+    .stTabs [data-baseweb="tab-list"] {
+        background: #161a22;
+        border-radius: 8px;
+        padding: 5px;
+        gap: 5px;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        background: transparent;
+        color: #888;
+        border-radius: 6px;
+        padding: 10px 20px;
+        font-weight: 600;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(145deg, #1e242e, #252b38);
+        color: #00c853;
+        border-bottom: 2px solid #00c853;
+    }
+
+    /* Metric cards */
+    .stMetric {
+        background: linear-gradient(145deg, #161a22, #1a1f2a);
+        border: 1px solid #2d333b;
+        border-radius: 10px;
+        padding: 15px;
+    }
+
+    .stMetric label {
+        color: #888 !important;
+    }
+
+    .stMetric [data-testid="stMetricValue"] {
+        color: #fff !important;
+    }
+
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #161a22, #0e1117);
+        border-right: 1px solid #2d333b;
+    }
+
+    [data-testid="stSidebar"] .stMarkdown {
+        color: #888;
+    }
+
+    /* Countdown timer */
+    .countdown {
+        font-size: 3em;
+        font-weight: 800;
+        font-family: 'SF Mono', 'Monaco', monospace;
+        text-align: center;
+        padding: 10px;
+        border-radius: 8px;
+    }
+
+    .countdown-live {
+        color: #00c853;
+        text-shadow: 0 0 30px rgba(0,200,83,0.5);
+        animation: pulse 2s infinite;
+    }
+
+    .countdown-warning {
+        color: #ffc107;
+    }
+
+    .countdown-danger {
+        color: #ff5252;
+        animation: blink 1s infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+
+    @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+    }
+
+    /* Pair cost display */
+    .pair-cost-display {
+        font-size: 2.5em;
+        font-weight: 800;
+        text-align: center;
+        padding: 20px;
+        border-radius: 12px;
+        margin: 10px 0;
+    }
+
+    .pair-cost-good {
+        background: linear-gradient(145deg, #1b5e20, #2e7d32);
+        color: #69f0ae;
+        border: 2px solid #4caf50;
+    }
+
+    .pair-cost-marginal {
+        background: linear-gradient(145deg, #f57f17, #ff8f00);
+        color: #fff;
+        border: 2px solid #ffc107;
+    }
+
+    .pair-cost-bad {
+        background: linear-gradient(145deg, #b71c1c, #c62828);
+        color: #ff8a80;
+        border: 2px solid #f44336;
+    }
+
+    /* Stats grid */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+        margin: 20px 0;
+    }
+
+    .stat-box {
+        background: linear-gradient(145deg, #161a22, #1a1f2a);
+        border: 1px solid #2d333b;
+        border-radius: 10px;
+        padding: 15px;
+        text-align: center;
+    }
+
+    .stat-value {
+        font-size: 1.8em;
+        font-weight: 700;
+        color: #fff;
+    }
+
+    .stat-label {
+        font-size: 0.7em;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-top: 5px;
+    }
+
+    /* Divider */
+    hr {
+        border: none;
+        border-top: 1px solid #2d333b;
+        margin: 20px 0;
+    }
+
+    /* Input fields */
+    .stTextInput input {
+        background: #161a22;
+        border: 1px solid #2d333b;
+        color: #fff;
+    }
+
+    /* Expander */
+    .streamlit-expanderHeader {
+        background: #161a22;
+        border: 1px solid #2d333b;
+        border-radius: 8px;
+    }
+
+    /* Toast/alerts */
+    .stAlert {
+        background: #161a22;
+        border: 1px solid #2d333b;
+    }
+
+    /* Progress bar */
+    .stProgress > div > div {
+        background: linear-gradient(90deg, #00c853, #69f0ae);
+    }
+</style>
+"""
+
+# Inject CSS
+st.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
 
 # =============================================================================
 # CONFIGURATION
@@ -99,23 +477,12 @@ EXCHANGE_CONTRACTS = [
 ]
 
 # Supported coins for Up/Down markets
-COIN_KEYWORDS = ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "xrp", "ripple"]
-
-COIN_MAP = {
-    "bitcoin": "BTC",
-    "btc": "BTC",
-    "ethereum": "ETH",
-    "eth": "ETH",
-    "solana": "SOL",
-    "sol": "SOL",
-    "xrp": "XRP",
-    "ripple": "XRP",
-}
+SLUG_COINS = ["btc", "eth", "sol", "xrp"]
 
 # Trading safety parameters
 MAX_IMBALANCE = 500          # Max allowed share imbalance
 WARN_IMBALANCE = 400         # Threshold to disable heavier side
-NO_TRADE_SECONDS = 90        # No trades in last 90 seconds (based on end_time if available)
+NO_TRADE_SECONDS = 90        # No trades in last 90 seconds
 PRICE_SLIPPAGE = 0.006       # Cross spread by 0.6 cents
 BUY_AMOUNTS = [10, 25, 50, 100]  # USD amounts for buy buttons
 REFRESH_INTERVAL = 8         # Seconds between auto-refresh
@@ -159,29 +526,36 @@ MINIMAL_ERC1155_ABI = [
 ]
 
 # =============================================================================
-# SESSION STATE INITIALIZATION - 100% SAFE
+# SESSION STATE INITIALIZATION
 # =============================================================================
 
 if 'state' not in st.session_state:
     st.session_state.state = {
-        "markets": {},      # condition_id → position dict
-        "history": [],      # archived completed markets
+        "markets": {},
+        "history": [],
         "allowance_approved": False,
-        "trade_log": []     # global trade log
+        "trade_log": [],
+        "equity_history": [],
+        "session_start": datetime.now(ET).isoformat(),
+        "total_trades": 0,
+        "daily_pnl": {},
     }
 
 # Ensure all keys exist (migration safety)
-if "markets" not in st.session_state.state:
-    st.session_state.state["markets"] = {}
+defaults = {
+    "markets": {},
+    "history": [],
+    "allowance_approved": False,
+    "trade_log": [],
+    "equity_history": [],
+    "session_start": datetime.now(ET).isoformat(),
+    "total_trades": 0,
+    "daily_pnl": {},
+}
 
-if "history" not in st.session_state.state:
-    st.session_state.state["history"] = []
-
-if "allowance_approved" not in st.session_state.state:
-    st.session_state.state["allowance_approved"] = False
-
-if "trade_log" not in st.session_state.state:
-    st.session_state.state["trade_log"] = []
+for key, default in defaults.items():
+    if key not in st.session_state.state:
+        st.session_state.state[key] = default
 
 if 'client' not in st.session_state:
     st.session_state.client = None
@@ -192,56 +566,177 @@ if 'wallet_connected' not in st.session_state:
     st.session_state.rpc_url = "https://polygon-rpc.com"
 
 # =============================================================================
-# SIDEBAR - WALLET SETUP
+# PLOTLY CHART FUNCTIONS
 # =============================================================================
 
-st.sidebar.header("🔑 Wallet Setup")
-st.sidebar.markdown("Private key stays in browser session only")
+def create_equity_curve(equity_history: List[Dict], height: int = 300) -> go.Figure:
+    """Create professional dark-themed equity curve."""
+    if not equity_history:
+        # Empty chart with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No trading data yet",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            showarrow=False,
+            font=dict(size=16, color="#888")
+        )
+    else:
+        times = [e.get("timestamp", "") for e in equity_history]
+        values = [e.get("total_profit", 0) for e in equity_history]
 
-# If not connected, show input form
-if not st.session_state.wallet_connected:
-    private_key_input = st.sidebar.text_input(
-        "Private Key (with or without 0x)",
-        type="password",
-        help="Use a dedicated hot wallet with only your trading funds."
+        # Determine line color based on final value
+        line_color = "#00c853" if values[-1] >= 0 else "#ff5252"
+        fill_color = "rgba(0, 200, 83, 0.1)" if values[-1] >= 0 else "rgba(255, 82, 82, 0.1)"
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=times,
+            y=values,
+            mode='lines',
+            line=dict(color=line_color, width=2),
+            fill='tozeroy',
+            fillcolor=fill_color,
+            name='Equity'
+        ))
+
+    fig.update_layout(
+        plot_bgcolor='#0e1117',
+        paper_bgcolor='#0e1117',
+        font=dict(color='#888'),
+        margin=dict(l=50, r=20, t=20, b=40),
+        height=height,
+        xaxis=dict(
+            showgrid=True,
+            gridcolor='#2d333b',
+            showline=True,
+            linecolor='#2d333b'
+        ),
+        yaxis=dict(
+            showgrid=True,
+            gridcolor='#2d333b',
+            showline=True,
+            linecolor='#2d333b',
+            tickprefix='$'
+        ),
+        showlegend=False,
+        hovermode='x unified'
     )
 
-    rpc_url_input = st.sidebar.text_input(
-        "Polygon RPC URL",
-        value="https://polygon-rpc.com",
-        help="Free public or use your Alchemy/Infura link for zero lag"
+    return fig
+
+
+def create_mini_sparkline(equity_history: List[Dict], width: int = 200, height: int = 50) -> go.Figure:
+    """Create mini sparkline for header."""
+    fig = go.Figure()
+
+    if equity_history:
+        values = [e.get("total_profit", 0) for e in equity_history[-20:]]
+        line_color = "#00c853" if (values[-1] if values else 0) >= 0 else "#ff5252"
+
+        fig.add_trace(go.Scatter(
+            y=values,
+            mode='lines',
+            line=dict(color=line_color, width=2),
+            fill='tozeroy',
+            fillcolor=f"rgba({76 if values[-1] >= 0 else 255}, {175 if values[-1] >= 0 else 82}, {80 if values[-1] >= 0 else 82}, 0.2)"
+        ))
+
+    fig.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=0, r=0, t=0, b=0),
+        width=width,
+        height=height,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        showlegend=False
     )
 
-    if st.sidebar.button("🔓 Connect Wallet", type="primary", use_container_width=True):
-        # Normalize private key - add 0x if missing
-        pk = private_key_input.strip()
-        if not pk.startswith("0x"):
-            pk = "0x" + pk
+    return fig
 
-        # Validate: should be 66 chars with 0x prefix (64 hex + "0x")
-        if len(pk) == 66:
-            try:
-                # Test if it's a valid key by deriving address
-                test_account = Account.from_key(pk)
 
-                # Success! Store in session
-                st.session_state.private_key = pk
-                st.session_state.rpc_url = rpc_url_input
-                st.session_state.wallet_connected = True
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"Invalid private key: {e}")
-        else:
-            st.sidebar.error(f"Private key should be 64 hex characters (got {len(pk)-2})")
+def create_pair_cost_gauge(pair_cost: float) -> go.Figure:
+    """Create circular gauge for pair cost visualization."""
+    # Determine color
+    if pair_cost < 0.98:
+        color = "#00c853"
+        status = "GOOD"
+    elif pair_cost <= 0.985:
+        color = "#ffc107"
+        status = "MARGINAL"
+    else:
+        color = "#ff5252"
+        status = "AVOID"
 
-    st.sidebar.markdown("---")
-    st.sidebar.caption("gabagool style • Dec 2025 • 4X printing season")
-    st.warning("⚠️ Enter your private key and click 'Connect Wallet' to start")
-    st.stop()
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=pair_cost,
+        number={'prefix': "$", 'font': {'size': 24, 'color': color}},
+        gauge={
+            'axis': {'range': [0.95, 1.0], 'tickcolor': '#888'},
+            'bar': {'color': color},
+            'bgcolor': '#161a22',
+            'bordercolor': '#2d333b',
+            'steps': [
+                {'range': [0.95, 0.98], 'color': 'rgba(0, 200, 83, 0.2)'},
+                {'range': [0.98, 0.985], 'color': 'rgba(255, 193, 7, 0.2)'},
+                {'range': [0.985, 1.0], 'color': 'rgba(255, 82, 82, 0.2)'}
+            ],
+            'threshold': {
+                'line': {'color': '#fff', 'width': 2},
+                'thickness': 0.8,
+                'value': pair_cost
+            }
+        }
+    ))
 
-# Wallet is connected
-PRIVATE_KEY = st.session_state.private_key
-POLYGON_RPC_URL = st.session_state.rpc_url
+    fig.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#888'),
+        margin=dict(l=20, r=20, t=30, b=10),
+        height=150
+    )
+
+    return fig
+
+
+def create_pnl_bar_chart(trades: List[Dict], height: int = 200) -> go.Figure:
+    """Create P/L bar chart for recent trades."""
+    fig = go.Figure()
+
+    if trades:
+        # Extract profit data
+        profits = []
+        labels = []
+        colors = []
+
+        for t in trades[:10]:
+            pnl = t.get("profit", 0)
+            profits.append(pnl)
+            labels.append(t.get("time", ""))
+            colors.append("#00c853" if pnl >= 0 else "#ff5252")
+
+        fig.add_trace(go.Bar(
+            x=labels,
+            y=profits,
+            marker_color=colors
+        ))
+
+    fig.update_layout(
+        plot_bgcolor='#0e1117',
+        paper_bgcolor='#0e1117',
+        font=dict(color='#888'),
+        margin=dict(l=40, r=20, t=10, b=40),
+        height=height,
+        xaxis=dict(showgrid=False),
+        yaxis=dict(showgrid=True, gridcolor='#2d333b', tickprefix='$'),
+        showlegend=False
+    )
+
+    return fig
+
 
 # =============================================================================
 # WEB3 SETUP
@@ -249,12 +744,12 @@ POLYGON_RPC_URL = st.session_state.rpc_url
 
 def get_web3() -> Web3:
     """Get Web3 instance connected to Polygon."""
-    return Web3(Web3.HTTPProvider(POLYGON_RPC_URL))
+    return Web3(Web3.HTTPProvider(st.session_state.rpc_url))
 
 
 def get_wallet_address() -> str:
     """Derive wallet address from private key."""
-    account = Account.from_key(PRIVATE_KEY)
+    account = Account.from_key(st.session_state.private_key)
     return account.address
 
 
@@ -271,7 +766,6 @@ def get_usdc_balance() -> Optional[float]:
             abi=MINIMAL_ERC20_ABI
         )
         raw_balance = usdc.functions.balanceOf(wallet_address).call()
-        # USDC has 6 decimals
         return float(raw_balance) / 1_000_000
     except Exception:
         return None
@@ -292,11 +786,7 @@ def get_matic_balance() -> Optional[float]:
 
 
 def approve_all_contracts() -> bool:
-    """
-    Approve USDC (ERC20) and Conditional Tokens (ERC1155) for all exchange contracts.
-    Must use manual signing for HTTPProvider.
-    USDC uses approve(), CT uses setApprovalForAll().
-    """
+    """Approve USDC and Conditional Tokens for all exchange contracts."""
     if st.session_state.state.get("allowance_approved", False):
         st.info("Allowances already approved!")
         return True
@@ -307,7 +797,7 @@ def approve_all_contracts() -> bool:
             st.error("Failed to connect to Polygon RPC")
             return False
 
-        account = Account.from_key(PRIVATE_KEY)
+        account = Account.from_key(st.session_state.private_key)
         wallet_address = account.address
 
         usdc = web3.eth.contract(
@@ -316,13 +806,15 @@ def approve_all_contracts() -> bool:
         )
         ct = web3.eth.contract(
             address=Web3.to_checksum_address(CONDITIONAL_TOKENS),
-            abi=MINIMAL_ERC1155_ABI  # ERC1155 for setApprovalForAll
+            abi=MINIMAL_ERC1155_ABI
         )
 
-        st.warning("Sending approvals — this will take ~15 seconds...")
+        progress = st.progress(0)
+        status = st.empty()
 
-        # USDC approvals (ERC20 - keep these)
-        for contract_addr in EXCHANGE_CONTRACTS:
+        # USDC approvals
+        for i, contract_addr in enumerate(EXCHANGE_CONTRACTS):
+            status.info(f"Approving USDC for contract {i+1}/3...")
             nonce = web3.eth.get_transaction_count(wallet_address)
             tx = usdc.functions.approve(
                 Web3.to_checksum_address(contract_addr),
@@ -336,12 +828,13 @@ def approve_all_contracts() -> bool:
             })
             signed_tx = account.sign_transaction(tx)
             tx_hash = web3.eth.send_raw_transaction(signed_tx.raw_transaction)
-            st.info(f"USDC approval sent → {tx_hash.hex()[:10]}...")
             web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            progress.progress((i + 1) / 6)
             time.sleep(1)
 
-        # Conditional Tokens approvals (ERC1155 - use setApprovalForAll)
-        for contract_addr in EXCHANGE_CONTRACTS:
+        # CT approvals
+        for i, contract_addr in enumerate(EXCHANGE_CONTRACTS):
+            status.info(f"Approving CT for contract {i+1}/3...")
             nonce = web3.eth.get_transaction_count(wallet_address)
             tx = ct.functions.setApprovalForAll(
                 Web3.to_checksum_address(contract_addr),
@@ -355,13 +848,12 @@ def approve_all_contracts() -> bool:
             })
             signed_tx = account.sign_transaction(tx)
             tx_hash = web3.eth.send_raw_transaction(signed_tx.raw_transaction)
-            st.info(f"CT approval sent → {tx_hash.hex()[:10]}...")
             web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            progress.progress((i + 4) / 6)
             time.sleep(1)
 
         st.session_state.state["allowance_approved"] = True
-        st.success("✅ All 6 approvals succeeded — you are now fully live forever!")
-        st.balloons()
+        status.success("All approvals complete!")
         return True
 
     except Exception as e:
@@ -370,111 +862,44 @@ def approve_all_contracts() -> bool:
 
 
 # =============================================================================
-# SIDEBAR - WALLET INFO + BALANCES
-# =============================================================================
-
-try:
-    wallet_addr = get_wallet_address()
-    st.sidebar.success(f"✅ {wallet_addr[:6]}...{wallet_addr[-4:]}")
-except:
-    st.sidebar.error("Invalid private key")
-    st.stop()
-
-# Wallet balances in sidebar - BIG GREEN NUMBERS
-st.sidebar.markdown("---")
-st.sidebar.subheader("💰 Balances")
-
-try:
-    usdc_bal = get_usdc_balance()
-    matic_bal = get_matic_balance()
-
-    if usdc_bal is not None:
-        st.sidebar.markdown(f"<h2 style='color: #00c853; margin: 0;'>${usdc_bal:.2f} USDC</h2>", unsafe_allow_html=True)
-    else:
-        st.sidebar.warning("USDC: Error loading")
-
-    if matic_bal is not None:
-        st.sidebar.info(f"MATIC Balance: {matic_bal:.6f}")
-    else:
-        st.sidebar.warning("MATIC: Error loading")
-except:
-    st.sidebar.error("Balance check failed — check RPC")
-
-st.sidebar.markdown("---")
-
-if st.sidebar.button("🔒 Disconnect Wallet", use_container_width=True):
-    st.session_state.wallet_connected = False
-    st.session_state.private_key = ""
-    st.session_state.client = None
-    st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.caption("gabagool style • Dec 2025 • 4X printing season")
-
-
-# =============================================================================
 # CLOB CLIENT INITIALIZATION
 # =============================================================================
 
 def get_clob_client() -> Optional[ClobClient]:
-    """
-    Get or create the ClobClient instance.
-    Uses signature_type=0 for EOA wallets (MetaMask/Rabby).
-    """
-    # Return cached client if exists
+    """Get or create the ClobClient instance."""
     if st.session_state.client is not None:
         return st.session_state.client
 
     try:
-        # Derive wallet address from private key
         wallet_address = get_wallet_address()
-
-        # Initialize client with EOA signature type
         client = ClobClient(
             host=CLOB_HOST,
-            key=PRIVATE_KEY,
+            key=st.session_state.private_key,
             chain_id=CHAIN_ID,
-            signature_type=0,  # EOA wallet
+            signature_type=0,
             funder=wallet_address
         )
-
-        # Derive and set API credentials
         creds = client.create_or_derive_api_creds()
         client.set_api_creds(creds)
-
-        # Cache in session state
         st.session_state.client = client
-
         return client
-
     except Exception as e:
         st.error(f"Failed to initialize CLOB client: {e}")
         return None
 
 
 # =============================================================================
-# MARKET DETECTION - GAMMA API (15-MIN MARKETS)
+# MARKET DETECTION - GAMMA API
 # =============================================================================
 
-# Coins to search for (lowercase for slug generation)
-SLUG_COINS = ["btc", "eth", "sol", "xrp"]
-
-
 def get_current_15m_timestamp() -> int:
-    """
-    Get the Unix timestamp for the current 15-minute window start.
-    MUST use integer division: (time // 900) * 900
-    """
+    """Get Unix timestamp for current 15-minute window start."""
     return int(time.time() // 900 * 900)
 
 
 def fetch_market_by_slug(slug: str) -> Optional[Dict]:
-    """
-    Fetch a specific market from Gamma API by slug.
-    Returns the market dict if found and active, None otherwise.
-    """
+    """Fetch a specific market from Gamma API by slug."""
     try:
-        # MUST use exactly this URL format - no other parameters
         response = requests.get(
             f"{GAMMA_API_HOST}/markets?slug={slug}",
             timeout=10
@@ -483,7 +908,6 @@ def fetch_market_by_slug(slug: str) -> Optional[Dict]:
             data = response.json()
             if data and len(data) > 0:
                 market = data[0]
-                # Only return if active and not closed
                 if market.get("active", False) and not market.get("closed", False):
                     return market
         return None
@@ -492,13 +916,8 @@ def fetch_market_by_slug(slug: str) -> Optional[Dict]:
 
 
 def find_active_market_for_coin(coin: str) -> Optional[Dict]:
-    """
-    Find active market for a specific coin by checking 3 timestamps.
-    Order: current, next (+900), previous (-900) - catches lagging/early markets.
-    """
+    """Find active market for a specific coin."""
     current_ts = get_current_15m_timestamp()
-
-    # Check in this exact order: current, next, previous
     timestamps_to_check = [current_ts, current_ts + 900, current_ts - 900]
 
     for ts in timestamps_to_check:
@@ -506,9 +925,7 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
         market = fetch_market_by_slug(slug)
 
         if market:
-            import json
-
-            # Extract token IDs - may be array or JSON string
+            # Parse JSON string fields
             token_ids_raw = market.get("clobTokenIds", [])
             if isinstance(token_ids_raw, str):
                 try:
@@ -518,7 +935,6 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
             else:
                 token_ids = token_ids_raw
 
-            # Extract outcomes - may be array or JSON string
             outcomes_raw = market.get("outcomes", ["Up", "Down"])
             if isinstance(outcomes_raw, str):
                 try:
@@ -528,7 +944,6 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
             else:
                 outcomes = outcomes_raw
 
-            # Extract prices - may be array or JSON string
             prices_raw = market.get("outcomePrices", ["0.5", "0.5"])
             if isinstance(prices_raw, str):
                 try:
@@ -539,16 +954,13 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
                 prices = prices_raw
 
             if len(token_ids) >= 2 and len(outcomes) >= 2:
-                # Find Up and Down indices from outcomes array
-                up_idx = 0
-                down_idx = 1
+                up_idx, down_idx = 0, 1
                 for i, outcome in enumerate(outcomes):
                     if str(outcome).lower() == "up":
                         up_idx = i
                     elif str(outcome).lower() == "down":
                         down_idx = i
 
-                # Parse end time from endDate field
                 end_time = None
                 end_date_str = market.get("endDate") or market.get("end_date_iso")
                 if end_date_str:
@@ -560,15 +972,13 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
                     except:
                         end_time = None
 
-                # Safely extract prices with fallback
                 try:
                     up_price = float(prices[up_idx]) if len(prices) > up_idx else 0.5
-                except (ValueError, TypeError):
+                except:
                     up_price = 0.5
-
                 try:
                     down_price = float(prices[down_idx]) if len(prices) > down_idx else 0.5
-                except (ValueError, TypeError):
+                except:
                     down_price = 0.5
 
                 return {
@@ -584,49 +994,40 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
                     "active": True,
                 }
 
-    # No active market found for this coin
     return None
 
 
 def find_all_active_updown_markets() -> List[Dict]:
-    """
-    Find all active 15-min Up/Down markets by querying Gamma API.
-    Always returns entries for all 4 coins (some may be waiting for next window).
-    Timestamps are refreshed every call - never cached.
-    """
+    """Find all active 15-min Up/Down markets."""
     all_markets = []
 
     for coin in SLUG_COINS:
         market = find_active_market_for_coin(coin)
-
         if market:
             all_markets.append(market)
         else:
-            # No active market - create placeholder for "waiting" state
             all_markets.append({
                 "condition_id": None,
                 "coin": coin.upper(),
-                "question": f"{coin.upper()} Up or Down - Waiting for next window...",
+                "question": f"{coin.upper()} Up or Down - Waiting...",
                 "slug": None,
                 "end_time": None,
                 "up_token_id": None,
                 "down_token_id": None,
                 "up_price": 0.5,
                 "down_price": 0.5,
-                "active": False,  # Flag to indicate waiting state
+                "active": False,
             })
 
-    # Sort by coin name for consistent tab order
     coin_order = {"BTC": 0, "ETH": 1, "SOL": 2, "XRP": 3}
     all_markets.sort(key=lambda x: coin_order.get(x.get("coin", "ZZZ"), 99))
-
     return all_markets
 
 
 def get_seconds_remaining(end_time) -> int:
-    """Calculate seconds remaining until market ends. Returns 999 if unknown."""
+    """Calculate seconds remaining until market ends."""
     if end_time is None:
-        return 999  # Unknown, assume plenty of time
+        return 999
     try:
         now = datetime.now(ET)
         if end_time.tzinfo is None:
@@ -646,14 +1047,13 @@ def format_countdown(seconds: int) -> str:
 
 
 # =============================================================================
-# MARKET STATE MANAGEMENT - CRASH-PROOF
+# MARKET STATE MANAGEMENT
 # =============================================================================
 
 def get_market_state(condition_id: str, coin: str) -> Dict:
-    """Get or create state for a specific market. Always returns valid dict."""
+    """Get or create state for a specific market."""
     markets = st.session_state.state.get("markets", {})
 
-    # Ensure markets exists in state
     if "markets" not in st.session_state.state:
         st.session_state.state["markets"] = {}
         markets = st.session_state.state["markets"]
@@ -680,7 +1080,6 @@ def archive_old_markets(active_condition_ids: List[str]):
     for cid, mstate in list(markets.items()):
         if cid not in active_condition_ids:
             try:
-                # Check if there were any positions
                 shares_up = mstate.get("shares_up", 0.0)
                 shares_down = mstate.get("shares_down", 0.0)
 
@@ -705,20 +1104,26 @@ def archive_old_markets(active_condition_ids: List[str]):
                         "shares_down": round(shares_down, 2),
                         "locked_profit": round(locked_profit, 2)
                     })
+
+                    # Update equity history
+                    total_profit = get_total_locked_profit() + get_total_history_profit()
+                    st.session_state.state["equity_history"].append({
+                        "timestamp": datetime.now(ET).strftime("%H:%M:%S"),
+                        "total_profit": total_profit
+                    })
+
             except Exception:
                 pass
 
             to_archive.append(cid)
 
-    # Remove archived markets
     for cid in to_archive:
         try:
             del markets[cid]
         except:
             pass
 
-    # Keep only last 50 history entries
-    st.session_state.state["history"] = history[:50]
+    st.session_state.state["history"] = history[:100]
 
 
 # =============================================================================
@@ -726,44 +1131,31 @@ def archive_old_markets(active_condition_ids: List[str]):
 # =============================================================================
 
 def get_prices(client: ClobClient, up_token_id: str, down_token_id: str) -> Tuple[float, float, float, float]:
-    """
-    Get mid prices and ask prices for both tokens.
-    Returns: (mid_up, mid_down, ask_up, ask_down)
-    """
+    """Get mid prices and ask prices for both tokens."""
     try:
-        # Get midpoints using built-in function
         mid_up = client.get_midpoint(up_token_id)
         mid_down = client.get_midpoint(down_token_id)
 
-        # Get orderbooks for ask prices
         ob_up = client.get_order_book(up_token_id)
         ob_down = client.get_order_book(down_token_id)
 
-        # Extract best ask prices
         ask_up = float(ob_up.asks[0].price) if ob_up.asks else 0.99
         ask_down = float(ob_down.asks[0].price) if ob_down.asks else 0.99
 
         return float(mid_up), float(mid_down), ask_up, ask_down
-
     except Exception:
         return 0.50, 0.50, 0.50, 0.50
 
 
 def check_safety(mstate: Dict, side: str, seconds_remaining: int) -> Tuple[bool, str]:
-    """
-    Check if a trade is allowed under safety rules.
-    Returns: (is_allowed, reason_if_blocked)
-    """
-    # Rule 1: No trading in final 90 seconds (only if we know the time)
+    """Check if a trade is allowed under safety rules."""
     if seconds_remaining < NO_TRADE_SECONDS and seconds_remaining != 999:
-        return False, f"Trading disabled - {seconds_remaining}s remaining (min: {NO_TRADE_SECONDS}s)"
+        return False, f"Trading disabled - {seconds_remaining}s remaining"
 
-    # Rule 2: Check imbalance limits
     shares_up = mstate.get("shares_up", 0.0)
     shares_down = mstate.get("shares_down", 0.0)
     current_imbalance = abs(shares_up - shares_down)
 
-    # Determine heavier side
     if shares_up > shares_down:
         heavier_side = "up"
     elif shares_down > shares_up:
@@ -771,10 +1163,9 @@ def check_safety(mstate: Dict, side: str, seconds_remaining: int) -> Tuple[bool,
     else:
         heavier_side = None
 
-    # If this trade would increase imbalance
     if heavier_side == side:
         if current_imbalance >= MAX_IMBALANCE:
-            return False, f"Max imbalance reached ({current_imbalance:.0f}/{MAX_IMBALANCE})"
+            return False, f"Max imbalance ({current_imbalance:.0f}/{MAX_IMBALANCE})"
         if current_imbalance >= WARN_IMBALANCE:
             return False, f"Imbalance warning ({current_imbalance:.0f}/{WARN_IMBALANCE})"
 
@@ -783,11 +1174,9 @@ def check_safety(mstate: Dict, side: str, seconds_remaining: int) -> Tuple[bool,
 
 def should_disable_button(mstate: Dict, side: str, seconds_remaining: int) -> bool:
     """Determine if a buy button should be disabled."""
-    # Disable if in final window (only if we know the time)
     if seconds_remaining < NO_TRADE_SECONDS and seconds_remaining != 999:
         return True
 
-    # Disable heavier side at warning threshold
     shares_up = mstate.get("shares_up", 0.0)
     shares_down = mstate.get("shares_down", 0.0)
     current_imbalance = abs(shares_up - shares_down)
@@ -806,36 +1195,27 @@ def execute_market_buy(
     side: str,
     cost_usd: float,
     mstate: Dict,
-    seconds_remaining: int
+    seconds_remaining: int,
+    coin: str = ""
 ) -> Tuple[bool, str, float, float]:
-    """
-    Execute a market buy order with safety checks and order polling.
-    Returns: (success, message, filled_size, actual_cost)
-    """
-    # Safety check
+    """Execute a market buy order with safety checks."""
     is_allowed, reason = check_safety(mstate, side, seconds_remaining)
     if not is_allowed:
         return False, reason, 0, 0
 
     try:
-        # Get order book to find best ask
         ob = client.get_order_book(token_id)
-
         if not ob.asks:
-            return False, "No asks available in order book", 0, 0
+            return False, "No asks available", 0, 0
 
         best_ask = float(ob.asks[0].price)
-
-        # Calculate execution price (slightly above best ask)
         exec_price = round(best_ask + PRICE_SLIPPAGE, 3)
-        exec_price = min(exec_price, 0.99)  # Cap at 0.99
+        exec_price = min(exec_price, 0.99)
 
-        # Calculate share quantity
         size = cost_usd / best_ask
         if size < 0.01:
             return False, f"Order too small: {size:.4f} shares", 0, 0
 
-        # Create order
         order_args = OrderArgs(
             token_id=token_id,
             price=exec_price,
@@ -843,7 +1223,6 @@ def execute_market_buy(
             side="BUY"
         )
 
-        # Execute order
         response = client.create_and_post_order(order_args)
 
         if not response or "orderID" not in response:
@@ -851,25 +1230,23 @@ def execute_market_buy(
             return False, f"Order failed: {error_msg}", 0, 0
 
         order_id = response["orderID"]
-
-        # Poll for fill after 3 seconds
         time.sleep(3)
 
         try:
             order_status = client.get_order(order_id)
             filled_size = float(order_status.get("size_matched", 0))
         except:
-            # If polling fails, assume fill at calculated size
             filled_size = size
 
         if filled_size <= 0:
-            return False, "Order not filled - may need retry", 0, 0
+            return False, "Order not filled", 0, 0
 
         actual_cost = filled_size * exec_price
 
-        # Update market state
+        # Update trade log
         trade_record = {
             "time": datetime.now(ET).strftime("%H:%M:%S"),
+            "coin": coin,
             "side": side.upper(),
             "usdc": round(actual_cost, 2),
             "shares": round(filled_size, 2),
@@ -879,14 +1256,29 @@ def execute_market_buy(
         if "trade_log" not in mstate:
             mstate["trade_log"] = []
         mstate["trade_log"].insert(0, trade_record)
-        mstate["trade_log"] = mstate["trade_log"][:50]  # Keep last 50
+        mstate["trade_log"] = mstate["trade_log"][:50]
 
+        # Global trade log
+        st.session_state.state["trade_log"].insert(0, trade_record)
+        st.session_state.state["trade_log"] = st.session_state.state["trade_log"][:200]
+
+        # Update position
         if side == "up":
             mstate["shares_up"] = mstate.get("shares_up", 0.0) + filled_size
             mstate["spent_up"] = mstate.get("spent_up", 0.0) + actual_cost
         else:
             mstate["shares_down"] = mstate.get("shares_down", 0.0) + filled_size
             mstate["spent_down"] = mstate.get("spent_down", 0.0) + actual_cost
+
+        # Update stats
+        st.session_state.state["total_trades"] = st.session_state.state.get("total_trades", 0) + 1
+
+        # Update equity history
+        total_profit = get_total_locked_profit() + get_total_history_profit()
+        st.session_state.state["equity_history"].append({
+            "timestamp": datetime.now(ET).strftime("%H:%M:%S"),
+            "total_profit": total_profit
+        })
 
         return True, f"Bought {filled_size:.2f} {side.upper()} @ ${exec_price:.3f}", filled_size, actual_cost
 
@@ -895,41 +1287,24 @@ def execute_market_buy(
 
 
 # =============================================================================
-# COMPUTED METRICS - COMPLETELY CRASH-PROOF
+# COMPUTED METRICS
 # =============================================================================
 
 def calculate_metrics(mstate: Dict) -> Dict[str, Any]:
-    """Calculate all position metrics for a market. Never crashes."""
+    """Calculate all position metrics for a market."""
     try:
         shares_up = mstate.get("shares_up", 0.0)
         shares_down = mstate.get("shares_down", 0.0)
         spent_up = mstate.get("spent_up", 0.0)
         spent_down = mstate.get("spent_down", 0.0)
 
-        # Average costs - safe division
-        if shares_up == 0:
-            avg_up = 0
-        else:
-            avg_up = spent_up / shares_up
-
-        if shares_down == 0:
-            avg_down = 0
-        else:
-            avg_down = spent_down / shares_down
-
-        # Pair cost (blended)
+        avg_up = spent_up / shares_up if shares_up > 0 else 0
+        avg_down = spent_down / shares_down if shares_down > 0 else 0
         avg_pair_cost = avg_up + avg_down if (shares_up > 0 and shares_down > 0) else 0
 
-        # Locked shares (complete pairs)
         locked_shares = min(shares_up, shares_down)
+        locked_profit = locked_shares * (1 - avg_pair_cost) if locked_shares > 0 and avg_pair_cost > 0 else 0
 
-        # Locked profit
-        if locked_shares > 0 and avg_pair_cost > 0:
-            locked_profit = locked_shares * (1 - avg_pair_cost)
-        else:
-            locked_profit = 0
-
-        # Unbalanced
         unbalanced = abs(shares_up - shares_down)
         imbalance_side = "up" if shares_up > shares_down else ("down" if shares_down > shares_up else None)
 
@@ -951,47 +1326,8 @@ def calculate_metrics(mstate: Dict) -> Dict[str, Any]:
         }
 
 
-def calculate_projected_pair_cost(mstate: Dict, buy_amount: float, cheaper_side: str, cheaper_ask: float) -> float:
-    """Calculate projected pair cost if user buys $X of cheaper side."""
-    try:
-        shares_up = mstate.get("shares_up", 0.0)
-        shares_down = mstate.get("shares_down", 0.0)
-        spent_up = mstate.get("spent_up", 0.0)
-        spent_down = mstate.get("spent_down", 0.0)
-
-        if cheaper_ask <= 0:
-            return 0
-
-        new_shares = buy_amount / cheaper_ask
-
-        if cheaper_side == "up":
-            new_shares_up = shares_up + new_shares
-            new_spent_up = spent_up + buy_amount
-            new_avg_up = new_spent_up / new_shares_up if new_shares_up > 0 else 0
-            new_avg_down = spent_down / shares_down if shares_down > 0 else 0
-        else:
-            new_shares_down = shares_down + new_shares
-            new_spent_down = spent_down + buy_amount
-            new_avg_up = spent_up / shares_up if shares_up > 0 else 0
-            new_avg_down = new_spent_down / new_shares_down if new_shares_down > 0 else 0
-
-        return new_avg_up + new_avg_down
-    except Exception:
-        return 0
-
-
-def get_pair_cost_color(pair_cost: float) -> str:
-    """Get color indicator for pair cost gauge."""
-    if pair_cost < 0.98:
-        return "green"
-    elif pair_cost <= 0.985:
-        return "orange"
-    else:
-        return "red"
-
-
 def get_total_locked_profit() -> float:
-    """Calculate total locked profit across all active markets. CRASH-PROOF."""
+    """Calculate total locked profit across all active markets."""
     total = 0.0
     try:
         markets = st.session_state.state.get("markets", {})
@@ -1002,28 +1338,21 @@ def get_total_locked_profit() -> float:
                 shares_down = mstate.get("shares_down", 0.0)
                 spent_down = mstate.get("spent_down", 0.0)
 
-                if shares_up == 0:
-                    avg_up = 0
-                else:
-                    avg_up = spent_up / shares_up
-
-                if shares_down == 0:
-                    avg_down = 0
-                else:
-                    avg_down = spent_down / shares_down
+                avg_up = spent_up / shares_up if shares_up > 0 else 0
+                avg_down = spent_down / shares_down if shares_down > 0 else 0
 
                 pair_cost = avg_up + avg_down
                 locked = min(shares_up, shares_down)
                 total += locked * (1 - pair_cost)
-            except Exception:
+            except:
                 continue
-    except Exception:
+    except:
         pass
     return round(total, 3)
 
 
 def get_total_history_profit() -> float:
-    """Calculate total locked profit from all historical markets. CRASH-PROOF."""
+    """Calculate total profit from historical markets."""
     total = 0.0
     try:
         for entry in st.session_state.state.get("history", []):
@@ -1031,9 +1360,399 @@ def get_total_history_profit() -> float:
                 total += float(entry.get("locked_profit", 0))
             except:
                 continue
-    except Exception:
+    except:
         pass
     return round(total, 3)
+
+
+def calculate_session_stats() -> Dict[str, Any]:
+    """Calculate comprehensive session statistics."""
+    state = st.session_state.state
+
+    total_trades = state.get("total_trades", 0)
+    history = state.get("history", [])
+    trade_log = state.get("trade_log", [])
+
+    # Calculate various stats
+    total_profit = get_total_locked_profit() + get_total_history_profit()
+
+    # Win rate (profitable markets)
+    winning_markets = sum(1 for h in history if h.get("locked_profit", 0) > 0)
+    total_markets = len(history)
+    win_rate = (winning_markets / total_markets * 100) if total_markets > 0 else 0
+
+    # Average pair cost
+    avg_pair_costs = []
+    for mstate in state.get("markets", {}).values():
+        m = calculate_metrics(mstate)
+        if m["avg_pair_cost"] > 0:
+            avg_pair_costs.append(m["avg_pair_cost"])
+    avg_pair_cost = sum(avg_pair_costs) / len(avg_pair_costs) if avg_pair_costs else 0
+
+    # Best/worst market
+    profits = [h.get("locked_profit", 0) for h in history]
+    best_profit = max(profits) if profits else 0
+    worst_profit = min(profits) if profits else 0
+
+    # Total volume
+    total_volume = sum(t.get("usdc", 0) for t in trade_log)
+
+    # Max drawdown (approximation)
+    equity = state.get("equity_history", [])
+    if equity:
+        peak = 0
+        max_dd = 0
+        for e in equity:
+            val = e.get("total_profit", 0)
+            peak = max(peak, val)
+            dd = peak - val
+            max_dd = max(max_dd, dd)
+    else:
+        max_dd = 0
+
+    return {
+        "total_trades": total_trades,
+        "total_profit": total_profit,
+        "win_rate": win_rate,
+        "avg_pair_cost": avg_pair_cost,
+        "best_profit": best_profit,
+        "worst_profit": worst_profit,
+        "total_volume": total_volume,
+        "max_drawdown": max_dd,
+        "markets_completed": total_markets,
+    }
+
+
+# =============================================================================
+# BACKUP/RESTORE FUNCTIONS
+# =============================================================================
+
+def export_state_json() -> str:
+    """Export current state to JSON string."""
+    return json.dumps(st.session_state.state, default=str, indent=2)
+
+
+def import_state_json(json_str: str) -> bool:
+    """Import state from JSON string."""
+    try:
+        data = json.loads(json_str)
+        st.session_state.state.update(data)
+        return True
+    except Exception as e:
+        st.error(f"Import failed: {e}")
+        return False
+
+
+# =============================================================================
+# SIDEBAR - WALLET & CONTROLS
+# =============================================================================
+
+def render_sidebar():
+    """Render professional sidebar with wallet and controls."""
+
+    # Wallet section
+    st.sidebar.markdown("""
+    <div style='text-align: center; padding: 10px 0;'>
+        <span style='font-size: 1.5em;'>💎</span>
+        <span style='color: #00c853; font-weight: bold; font-size: 1.1em;'> WALLET</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not st.session_state.wallet_connected:
+        private_key_input = st.sidebar.text_input(
+            "Private Key",
+            type="password",
+            help="Use a dedicated hot wallet"
+        )
+
+        rpc_url_input = st.sidebar.text_input(
+            "Polygon RPC",
+            value="https://polygon-rpc.com"
+        )
+
+        if st.sidebar.button("Connect Wallet", type="primary", use_container_width=True):
+            pk = private_key_input.strip()
+            if not pk.startswith("0x"):
+                pk = "0x" + pk
+
+            if len(pk) == 66:
+                try:
+                    Account.from_key(pk)
+                    st.session_state.private_key = pk
+                    st.session_state.rpc_url = rpc_url_input
+                    st.session_state.wallet_connected = True
+                    st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Invalid key: {e}")
+            else:
+                st.sidebar.error("Key must be 64 hex characters")
+
+        st.sidebar.markdown("---")
+        st.sidebar.caption("gabagool style - Dec 2025")
+        st.stop()
+
+    # Connected wallet info
+    try:
+        wallet_addr = get_wallet_address()
+        st.sidebar.markdown(f"""
+        <div style='background: #161a22; padding: 15px; border-radius: 10px; border: 1px solid #2d333b; margin-bottom: 15px;'>
+            <div style='color: #00c853; font-weight: bold;'>Connected</div>
+            <div style='color: #888; font-family: monospace; font-size: 0.85em;'>{wallet_addr[:8]}...{wallet_addr[-6:]}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    except:
+        st.sidebar.error("Invalid key")
+        st.stop()
+
+    # Balances
+    st.sidebar.markdown("#### Balances")
+
+    col1, col2 = st.sidebar.columns(2)
+
+    usdc_bal = get_usdc_balance()
+    matic_bal = get_matic_balance()
+
+    with col1:
+        if usdc_bal is not None:
+            st.sidebar.markdown(f"""
+            <div style='background: linear-gradient(145deg, #1b5e20, #2e7d32); padding: 12px; border-radius: 8px; text-align: center;'>
+                <div style='color: #69f0ae; font-size: 1.4em; font-weight: bold;'>${usdc_bal:.2f}</div>
+                <div style='color: #a5d6a7; font-size: 0.7em;'>USDC</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.sidebar.warning("USDC: Error")
+
+    with col2:
+        if matic_bal is not None:
+            st.sidebar.markdown(f"""
+            <div style='background: #161a22; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #2d333b;'>
+                <div style='color: #fff; font-size: 1.1em; font-weight: bold;'>{matic_bal:.4f}</div>
+                <div style='color: #888; font-size: 0.7em;'>MATIC</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.sidebar.warning("MATIC: Error")
+
+    st.sidebar.markdown("---")
+
+    # Backup/Restore
+    st.sidebar.markdown("#### Data Management")
+
+    # Download backup
+    backup_data = export_state_json()
+    b64 = base64.b64encode(backup_data.encode()).decode()
+    filename = f"polymarket_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+    st.sidebar.markdown(f"""
+    <a href="data:application/json;base64,{b64}" download="{filename}"
+       style="display: block; text-align: center; background: #161a22; border: 1px solid #2d333b;
+              padding: 10px; border-radius: 8px; color: #00c853; text-decoration: none;
+              font-weight: bold; margin-bottom: 10px;">
+        Download Backup
+    </a>
+    """, unsafe_allow_html=True)
+
+    # Upload restore
+    uploaded_file = st.sidebar.file_uploader("Restore Backup", type="json", label_visibility="collapsed")
+    if uploaded_file:
+        content = uploaded_file.read().decode()
+        if st.sidebar.button("Restore Data", use_container_width=True):
+            if import_state_json(content):
+                st.sidebar.success("Restored!")
+                st.rerun()
+
+    st.sidebar.markdown("---")
+
+    # Disconnect
+    if st.sidebar.button("Disconnect", use_container_width=True):
+        st.session_state.wallet_connected = False
+        st.session_state.private_key = ""
+        st.session_state.client = None
+        st.rerun()
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption("gabagool style - Dec 2025")
+    st.sidebar.caption("4X PRINTING SEASON")
+
+
+# =============================================================================
+# HEADER BAR
+# =============================================================================
+
+def render_header():
+    """Render professional fixed header with stats."""
+    stats = calculate_session_stats()
+    total_profit = stats["total_profit"]
+    profit_class = "profit-positive" if total_profit >= 0 else "profit-negative"
+    profit_sign = "+" if total_profit >= 0 else ""
+
+    st.markdown(f"""
+    <div style='background: linear-gradient(180deg, #161a22 0%, #0e1117 100%);
+                border-bottom: 2px solid #00c853; padding: 20px 30px; margin: -1rem -1rem 1.5rem -1rem;
+                box-shadow: 0 4px 30px rgba(0,200,83,0.2);'>
+        <div style='display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px;'>
+            <div>
+                <div style='color: #00c853; font-size: 1.6em; font-weight: 800; letter-spacing: 3px;
+                            text-shadow: 0 0 30px rgba(0,200,83,0.4);'>
+                    POLYMARKET 15-MIN COMBO PRINTER
+                </div>
+                <div style='color: #888; font-size: 0.85em; letter-spacing: 1px; margin-top: 5px;'>
+                    BTC • ETH • SOL • XRP — GABAGOOL STYLE
+                </div>
+            </div>
+            <div style='display: flex; gap: 40px; align-items: center;'>
+                <div style='text-align: center;'>
+                    <div class='{profit_class}' style='font-size: 2em; font-weight: 800;'>
+                        {profit_sign}${abs(total_profit):.2f}
+                    </div>
+                    <div style='color: #888; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px;'>
+                        Total Locked
+                    </div>
+                </div>
+                <div style='text-align: center;'>
+                    <div style='color: #fff; font-size: 1.5em; font-weight: 700;'>{stats["total_trades"]}</div>
+                    <div style='color: #888; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px;'>
+                        Trades
+                    </div>
+                </div>
+                <div style='text-align: center;'>
+                    <div style='color: #fff; font-size: 1.5em; font-weight: 700;'>
+                        ${stats["avg_pair_cost"]:.4f}
+                    </div>
+                    <div style='color: #888; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px;'>
+                        Avg Pair Cost
+                    </div>
+                </div>
+                <div style='text-align: center;'>
+                    <div style='color: #ffc107; font-size: 1.5em; font-weight: 700;'>
+                        {stats["win_rate"]:.0f}%
+                    </div>
+                    <div style='color: #888; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px;'>
+                        Win Rate
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# =============================================================================
+# DASHBOARD TAB
+# =============================================================================
+
+def render_dashboard_tab(all_markets: List[Dict], client: ClobClient):
+    """Render main dashboard with overview of all markets."""
+
+    # Market cards row
+    st.markdown("### Market Overview")
+
+    cols = st.columns(4)
+
+    for i, market in enumerate(all_markets):
+        coin = market["coin"]
+        is_active = market.get("active", False)
+
+        with cols[i]:
+            # Get prices if active
+            if is_active and client:
+                try:
+                    mid_up, mid_down, _, _ = get_prices(client, market["up_token_id"], market["down_token_id"])
+                    pair_cost = mid_up + mid_down
+                except:
+                    pair_cost = 0.99
+            else:
+                pair_cost = 0
+
+            # Get position if exists
+            if is_active and market.get("condition_id"):
+                mstate = get_market_state(market["condition_id"], coin)
+                metrics = calculate_metrics(mstate)
+            else:
+                metrics = {"locked_profit": 0, "locked_shares": 0}
+
+            # Determine colors
+            coin_colors = {"BTC": "#f7931a", "ETH": "#627eea", "SOL": "#00ffa3", "XRP": "#888"}
+            coin_color = coin_colors.get(coin, "#888")
+
+            status_color = "#00c853" if is_active else "#ffc107"
+            status_text = "LIVE" if is_active else "WAITING"
+
+            pair_cost_color = "#00c853" if pair_cost < 0.98 else ("#ffc107" if pair_cost <= 0.985 else "#ff5252")
+
+            profit = metrics["locked_profit"]
+            profit_color = "#00c853" if profit >= 0 else "#ff5252"
+            profit_sign = "+" if profit >= 0 else ""
+
+            st.markdown(f"""
+            <div style='background: linear-gradient(145deg, #161a22, #1a1f2a);
+                        border: 1px solid #2d333b; border-left: 4px solid {status_color};
+                        border-radius: 12px; padding: 20px; text-align: center;
+                        transition: all 0.3s ease;'>
+                <div style='color: {coin_color}; font-size: 2.2em; font-weight: 800;'>{coin}</div>
+                <div style='color: {status_color}; font-size: 0.8em; font-weight: 600;
+                            letter-spacing: 2px; margin: 5px 0;'>{status_text}</div>
+                {"<div style='color: " + pair_cost_color + "; font-size: 1.8em; font-weight: 700; margin: 15px 0;'>$" + f"{pair_cost:.4f}" + "</div>" if is_active else "<div style='color: #888; font-size: 1.2em; margin: 15px 0;'>---</div>"}
+                <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Pair Cost</div>
+                <div style='border-top: 1px solid #2d333b; margin-top: 15px; padding-top: 15px;'>
+                    <div style='color: {profit_color}; font-size: 1.3em; font-weight: 700;'>
+                        {profit_sign}${abs(profit):.2f}
+                    </div>
+                    <div style='color: #888; font-size: 0.7em;'>Locked Profit</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Equity curve
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.markdown("### Equity Curve")
+        equity_history = st.session_state.state.get("equity_history", [])
+        fig = create_equity_curve(equity_history, height=350)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+    with col2:
+        st.markdown("### Session Stats")
+        stats = calculate_session_stats()
+
+        st.markdown(f"""
+        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 15px;'>
+            <div style='display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #2d333b;'>
+                <span style='color: #888;'>Markets Completed</span>
+                <span style='color: #fff; font-weight: bold;'>{stats["markets_completed"]}</span>
+            </div>
+            <div style='display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #2d333b;'>
+                <span style='color: #888;'>Total Volume</span>
+                <span style='color: #fff; font-weight: bold;'>${stats["total_volume"]:.2f}</span>
+            </div>
+            <div style='display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #2d333b;'>
+                <span style='color: #888;'>Best Market</span>
+                <span style='color: #00c853; font-weight: bold;'>+${stats["best_profit"]:.2f}</span>
+            </div>
+            <div style='display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #2d333b;'>
+                <span style='color: #888;'>Worst Market</span>
+                <span style='color: #ff5252; font-weight: bold;'>${stats["worst_profit"]:.2f}</span>
+            </div>
+            <div style='display: flex; justify-content: space-between; padding: 10px 0;'>
+                <span style='color: #888;'>Max Drawdown</span>
+                <span style='color: #ffc107; font-weight: bold;'>${stats["max_drawdown"]:.2f}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Recent trades
+    st.markdown("### Recent Trades")
+    trade_log = st.session_state.state.get("trade_log", [])[:10]
+
+    if trade_log:
+        df = pd.DataFrame(trade_log)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No trades yet. Start trading to see activity here.")
 
 
 # =============================================================================
@@ -1041,31 +1760,37 @@ def get_total_history_profit() -> float:
 # =============================================================================
 
 def render_market_tab(market: Dict, client: ClobClient):
-    """Render the full dashboard for a single market inside its tab."""
+    """Render full trading interface for a single market."""
     coin = market["coin"]
 
-    # Check if market is in "waiting" state (no active market found)
+    # Waiting state
     if not market.get("active", False) or market.get("condition_id") is None:
         st.markdown(f"""
-        <div style='background-color: #1a1a2e; padding: 50px; border-radius: 20px; text-align: center; margin: 40px 0;'>
-            <h2 style='color: #ffc107; margin-bottom: 20px;'>⏳ {coin} - Waiting for next window...</h2>
-            <p style='color: #888; font-size: 1.3em;'>Next 15-minute market starting soon!</p>
-            <p style='color: #666; font-size: 1em; margin-top: 15px;'>Markets refresh every 15 minutes.</p>
-            <p style='color: #555; font-size: 0.9em; margin-top: 10px;'>Short gaps between windows are normal during oracle finalization.</p>
+        <div style='background: linear-gradient(145deg, #161a22, #1a1f2a);
+                    border: 1px solid #ffc107; border-radius: 20px;
+                    padding: 60px; text-align: center; margin: 40px 0;'>
+            <div style='font-size: 4em; margin-bottom: 20px;'>⏳</div>
+            <h2 style='color: #ffc107; margin-bottom: 15px;'>{coin} - Waiting for Next Window</h2>
+            <p style='color: #888; font-size: 1.1em;'>Next 15-minute market starting soon</p>
+            <p style='color: #555; font-size: 0.9em; margin-top: 20px;'>
+                Markets refresh every 15 minutes. Short gaps during oracle finalization are normal.
+            </p>
         </div>
         """, unsafe_allow_html=True)
 
-        # Show current time
         now = datetime.now(ET)
-        st.metric("Current Time (ET)", now.strftime("%I:%M:%S %p"))
+        st.markdown(f"""
+        <div style='text-align: center; color: #888;'>
+            Current Time (ET): <span style='color: #fff; font-weight: bold;'>{now.strftime("%I:%M:%S %p")}</span>
+        </div>
+        """, unsafe_allow_html=True)
         return
 
     condition_id = market["condition_id"]
     mstate = get_market_state(condition_id, coin)
-
     seconds_remaining = get_seconds_remaining(market.get("end_time"))
 
-    # Countdown + Question header
+    # Header row: Question + Countdown
     col1, col2 = st.columns([3, 1])
 
     with col1:
@@ -1073,54 +1798,70 @@ def render_market_tab(market: Dict, client: ClobClient):
 
     with col2:
         if seconds_remaining < 999:
-            countdown_color = "#ff5252" if seconds_remaining < NO_TRADE_SECONDS else "#00c853"
-            st.markdown(
-                f"<div style='font-size: 2.5em; font-weight: bold; color: {countdown_color}; text-align: center;'>{format_countdown(seconds_remaining)}</div>",
-                unsafe_allow_html=True
-            )
             if seconds_remaining < NO_TRADE_SECONDS:
-                st.error("⏰ TRADING DISABLED")
-        else:
-            st.markdown(
-                "<div style='font-size: 2em; font-weight: bold; color: #00c853; text-align: center;'>🟢 LIVE</div>",
-                unsafe_allow_html=True
-            )
+                countdown_class = "countdown-danger"
+            elif seconds_remaining < 180:
+                countdown_class = "countdown-warning"
+            else:
+                countdown_class = "countdown-live"
 
-    st.divider()
+            st.markdown(f"""
+            <div class='countdown {countdown_class}'>{format_countdown(seconds_remaining)}</div>
+            """, unsafe_allow_html=True)
+
+            if seconds_remaining < NO_TRADE_SECONDS:
+                st.error("TRADING DISABLED")
+        else:
+            st.markdown("""
+            <div class='countdown countdown-live'>LIVE</div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("---")
 
     # Get prices
     mid_up, mid_down, ask_up, ask_down = get_prices(client, market["up_token_id"], market["down_token_id"])
-
-    # PAIR COST GAUGE - BIG AND COLORED
     pair_cost = mid_up + mid_down
-    pair_color = get_pair_cost_color(pair_cost)
 
-    color_hex = {"green": "#00c853", "orange": "#ffc107", "red": "#ff5252"}[pair_color]
-    bg_hex = {"green": "#00c85322", "orange": "#ffc10722", "red": "#ff525222"}[pair_color]
+    # Pair cost display
+    if pair_cost < 0.98:
+        cost_class = "pair-cost-good"
+    elif pair_cost <= 0.985:
+        cost_class = "pair-cost-marginal"
+    else:
+        cost_class = "pair-cost-bad"
 
     st.markdown(f"""
-    <div style='background-color: {bg_hex}; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 20px;'>
-        <div style='color: {color_hex}; font-size: 2.5em; font-weight: bold;'>
-            PAIR COST: ${pair_cost:.4f}
-        </div>
-        <div style='color: #888; font-size: 0.9em; margin-top: 5px;'>
-            🟢 &lt; $0.98 good | 🟡 $0.98-0.985 marginal | 🔴 &gt; $0.985 avoid
-        </div>
+    <div class='pair-cost-display {cost_class}'>
+        PAIR COST: ${pair_cost:.4f}
     </div>
     """, unsafe_allow_html=True)
 
-    # Prices row
+    # Price cards
     col1, col2 = st.columns(2)
 
     with col1:
-        st.metric("⬆️ UP Mid", f"${mid_up:.4f}", delta=f"Ask: ${ask_up:.4f}")
+        st.markdown(f"""
+        <div style='background: linear-gradient(145deg, #1b5e20, #2e7d32);
+                    border: 1px solid #4caf50; border-radius: 10px; padding: 20px; text-align: center;'>
+            <div style='color: #a5d6a7; font-size: 0.8em; text-transform: uppercase;'>UP Price</div>
+            <div style='color: #69f0ae; font-size: 2em; font-weight: 800;'>${mid_up:.4f}</div>
+            <div style='color: #a5d6a7; font-size: 0.9em;'>Ask: ${ask_up:.4f}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     with col2:
-        st.metric("⬇️ DOWN Mid", f"${mid_down:.4f}", delta=f"Ask: ${ask_down:.4f}")
+        st.markdown(f"""
+        <div style='background: linear-gradient(145deg, #b71c1c, #c62828);
+                    border: 1px solid #f44336; border-radius: 10px; padding: 20px; text-align: center;'>
+            <div style='color: #ffcdd2; font-size: 0.8em; text-transform: uppercase;'>DOWN Price</div>
+            <div style='color: #ff8a80; font-size: 2em; font-weight: 800;'>${mid_down:.4f}</div>
+            <div style='color: #ffcdd2; font-size: 0.9em;'>Ask: ${ask_down:.4f}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.divider()
+    st.markdown("---")
 
-    # POSITION STATS
+    # Position stats
     metrics = calculate_metrics(mstate)
 
     col1, col2, col3, col4 = st.columns(4)
@@ -1128,48 +1869,39 @@ def render_market_tab(market: Dict, client: ClobClient):
     with col1:
         st.metric("UP Shares", f"{mstate.get('shares_up', 0):.2f}")
         if mstate.get('shares_up', 0) > 0:
-            st.caption(f"Avg: ${metrics['avg_up']:.4f} | Spent: ${mstate.get('spent_up', 0):.2f}")
+            st.caption(f"Avg: ${metrics['avg_up']:.4f}")
 
     with col2:
         st.metric("DOWN Shares", f"{mstate.get('shares_down', 0):.2f}")
         if mstate.get('shares_down', 0) > 0:
-            st.caption(f"Avg: ${metrics['avg_down']:.4f} | Spent: ${mstate.get('spent_down', 0):.2f}")
+            st.caption(f"Avg: ${metrics['avg_down']:.4f}")
 
     with col3:
         st.metric("Locked Pairs", f"{metrics['locked_shares']:.2f}")
-        if metrics['locked_profit'] >= 0:
-            st.markdown(f"<span style='color: #00c853; font-size: 1.3em; font-weight: bold;'>+${metrics['locked_profit']:.2f}</span>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<span style='color: #ff5252; font-size: 1.3em; font-weight: bold;'>${metrics['locked_profit']:.2f}</span>", unsafe_allow_html=True)
+        profit = metrics['locked_profit']
+        profit_color = "#00c853" if profit >= 0 else "#ff5252"
+        profit_sign = "+" if profit >= 0 else ""
+        st.markdown(f"<span style='color: {profit_color}; font-size: 1.5em; font-weight: bold;'>{profit_sign}${abs(profit):.2f}</span>", unsafe_allow_html=True)
 
     with col4:
-        st.metric("Unbalanced", f"{metrics['unbalanced']:.2f}")
+        st.metric("Imbalance", f"{metrics['unbalanced']:.2f}")
         if metrics['imbalance_side']:
             st.caption(f"Heavy: {metrics['imbalance_side'].upper()}")
         if metrics['unbalanced'] >= WARN_IMBALANCE:
-            st.warning("⚠️ High!")
+            st.warning("HIGH!")
 
-    # Projected pair cost
-    if mstate.get('shares_up', 0) > 0 or mstate.get('shares_down', 0) > 0:
-        cheaper_side = "up" if ask_up < ask_down else "down"
-        cheaper_ask = min(ask_up, ask_down)
-        projected = calculate_projected_pair_cost(mstate, 50, cheaper_side, cheaper_ask)
+    st.markdown("---")
 
-        if projected > 0:
-            st.info(f"💡 Buy $50 {cheaper_side.upper()} → new pair cost = **${projected:.4f}**")
-
-    st.divider()
-
-    # BUY BUTTONS
-    st.markdown("### 🛒 Trade")
+    # Buy buttons
+    st.markdown("### Trade")
 
     if pair_cost > 0.99:
-        st.error("⚠️ Pair cost > $0.99 - Avoid trading!")
+        st.error("Pair cost > $0.99 - Avoid trading!")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("**⬆️ Buy UP**")
+        st.markdown("**BUY UP**")
         up_disabled = should_disable_button(mstate, "up", seconds_remaining)
 
         cols = st.columns(len(BUY_AMOUNTS))
@@ -1182,9 +1914,9 @@ def render_market_tab(market: Dict, client: ClobClient):
                     use_container_width=True
                 ):
                     with st.spinner(f"Buying ${amount} UP..."):
-                        success, msg, filled, cost = execute_market_buy(
+                        success, msg, _, _ = execute_market_buy(
                             client, market["up_token_id"], "up", amount,
-                            mstate, seconds_remaining
+                            mstate, seconds_remaining, coin
                         )
                         if success:
                             st.success(msg)
@@ -1194,7 +1926,7 @@ def render_market_tab(market: Dict, client: ClobClient):
                         st.rerun()
 
     with col2:
-        st.markdown("**⬇️ Buy DOWN**")
+        st.markdown("**BUY DOWN**")
         down_disabled = should_disable_button(mstate, "down", seconds_remaining)
 
         cols = st.columns(len(BUY_AMOUNTS))
@@ -1207,9 +1939,9 @@ def render_market_tab(market: Dict, client: ClobClient):
                     use_container_width=True
                 ):
                     with st.spinner(f"Buying ${amount} DOWN..."):
-                        success, msg, filled, cost = execute_market_buy(
+                        success, msg, _, _ = execute_market_buy(
                             client, market["down_token_id"], "down", amount,
-                            mstate, seconds_remaining
+                            mstate, seconds_remaining, coin
                         )
                         if success:
                             st.success(msg)
@@ -1218,13 +1950,180 @@ def render_market_tab(market: Dict, client: ClobClient):
                         time.sleep(1)
                         st.rerun()
 
-    # Trade log for this market
+    # Market trade log
     trade_log = mstate.get("trade_log", [])
     if trade_log:
-        st.divider()
-        st.markdown("**📝 Recent Trades**")
+        st.markdown("---")
+        st.markdown("**Recent Trades**")
         df = pd.DataFrame(trade_log[:10])
         st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+# =============================================================================
+# JOURNAL TAB
+# =============================================================================
+
+def render_journal_tab():
+    """Render full trade journal with filtering."""
+    st.markdown("### Trade Journal")
+
+    trade_log = st.session_state.state.get("trade_log", [])
+
+    if not trade_log:
+        st.info("No trades recorded yet. Start trading to build your journal.")
+        return
+
+    # Filters
+    col1, col2, col3 = st.columns([1, 1, 2])
+
+    with col1:
+        coin_filter = st.selectbox("Filter by Coin", ["All", "BTC", "ETH", "SOL", "XRP"])
+
+    with col2:
+        side_filter = st.selectbox("Filter by Side", ["All", "UP", "DOWN"])
+
+    # Filter trades
+    filtered = trade_log
+    if coin_filter != "All":
+        filtered = [t for t in filtered if t.get("coin") == coin_filter]
+    if side_filter != "All":
+        filtered = [t for t in filtered if t.get("side") == side_filter]
+
+    # Stats summary
+    total_volume = sum(t.get("usdc", 0) for t in filtered)
+    avg_price = sum(t.get("price", 0) for t in filtered) / len(filtered) if filtered else 0
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Trades", len(filtered))
+    col2.metric("Total Volume", f"${total_volume:.2f}")
+    col3.metric("Avg Price", f"${avg_price:.4f}")
+    col4.metric("Total Shares", f"{sum(t.get('shares', 0) for t in filtered):.2f}")
+
+    st.markdown("---")
+
+    # Trade table
+    if filtered:
+        df = pd.DataFrame(filtered)
+        st.dataframe(df, use_container_width=True, hide_index=True, height=500)
+
+        # Export button
+        csv = df.to_csv(index=False)
+        b64 = base64.b64encode(csv.encode()).decode()
+        filename = f"trade_journal_{datetime.now().strftime('%Y%m%d')}.csv"
+
+        st.markdown(f"""
+        <a href="data:text/csv;base64,{b64}" download="{filename}"
+           style="display: inline-block; background: #161a22; border: 1px solid #00c853;
+                  padding: 10px 20px; border-radius: 8px; color: #00c853; text-decoration: none;
+                  font-weight: bold;">
+            Export to CSV
+        </a>
+        """, unsafe_allow_html=True)
+    else:
+        st.warning("No trades match the selected filters.")
+
+
+# =============================================================================
+# STATS TAB
+# =============================================================================
+
+def render_stats_tab():
+    """Render comprehensive statistics dashboard."""
+    st.markdown("### Performance Statistics")
+
+    stats = calculate_session_stats()
+
+    # Top stats row
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    profit_color = "#00c853" if stats["total_profit"] >= 0 else "#ff5252"
+    profit_sign = "+" if stats["total_profit"] >= 0 else ""
+
+    with col1:
+        st.markdown(f"""
+        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 20px; text-align: center;'>
+            <div style='color: {profit_color}; font-size: 2em; font-weight: 800;'>{profit_sign}${abs(stats["total_profit"]):.2f}</div>
+            <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Total P&L</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown(f"""
+        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 20px; text-align: center;'>
+            <div style='color: #fff; font-size: 2em; font-weight: 800;'>{stats["total_trades"]}</div>
+            <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Total Trades</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        st.markdown(f"""
+        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 20px; text-align: center;'>
+            <div style='color: #ffc107; font-size: 2em; font-weight: 800;'>{stats["win_rate"]:.1f}%</div>
+            <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Win Rate</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col4:
+        st.markdown(f"""
+        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 20px; text-align: center;'>
+            <div style='color: #00c853; font-size: 2em; font-weight: 800;'>+${stats["best_profit"]:.2f}</div>
+            <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Best Market</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col5:
+        st.markdown(f"""
+        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 20px; text-align: center;'>
+            <div style='color: #ff5252; font-size: 2em; font-weight: 800;'>${stats["max_drawdown"]:.2f}</div>
+            <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Max Drawdown</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Equity curve (larger)
+    st.markdown("### Equity Curve")
+    equity_history = st.session_state.state.get("equity_history", [])
+    fig = create_equity_curve(equity_history, height=400)
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+    st.markdown("---")
+
+    # Market history
+    st.markdown("### Completed Markets")
+
+    history = st.session_state.state.get("history", [])
+
+    if history:
+        df = pd.DataFrame(history[:50])
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No completed markets yet.")
+
+    st.markdown("---")
+
+    # Session info
+    st.markdown("### Session Info")
+
+    session_start = st.session_state.state.get("session_start", "Unknown")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown(f"""
+        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 15px;'>
+            <div style='color: #888; font-size: 0.8em;'>Session Started</div>
+            <div style='color: #fff; font-weight: bold;'>{session_start}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown(f"""
+        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 15px;'>
+            <div style='color: #888; font-size: 0.8em;'>Total Volume Traded</div>
+            <div style='color: #fff; font-weight: bold;'>${stats["total_volume"]:.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 # =============================================================================
@@ -1234,116 +2133,72 @@ def render_market_tab(market: Dict, client: ClobClient):
 def main():
     """Main Streamlit application."""
 
+    # Render sidebar
+    render_sidebar()
+
     state = st.session_state.state
 
-    # Custom CSS
-    st.markdown("""
-    <style>
-        .big-font { font-size: 2em !important; font-weight: bold; }
-        .profit-green { color: #00c853; }
-        .profit-red { color: #ff5252; }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # =========================================================================
-    # SETUP BUTTON (if allowances not approved)
-    # =========================================================================
+    # Setup check
     if not state.get("allowance_approved", False):
-        st.warning("⚠️ First-time setup required: Approve token spending")
+        st.warning("First-time setup required: Approve token spending")
 
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            if st.button("🔐 SETUP: Approve USDC & Token Allowances",
-                        type="primary", use_container_width=True):
+            if st.button("SETUP: Approve Allowances", type="primary", use_container_width=True):
                 with st.spinner("Sending approval transactions..."):
                     if approve_all_contracts():
                         st.rerun()
 
-        st.divider()
-
-    # =========================================================================
-    # CLOB CLIENT
-    # =========================================================================
-    client = get_clob_client()
-    if client is None:
-        st.error("Failed to initialize trading client. Check your private key.")
         st.stop()
 
-    # =========================================================================
-    # PROFIT SUMMARY - TOP OF PAGE
-    # =========================================================================
-    active_profit = get_total_locked_profit()
-    history_profit = get_total_history_profit()
-    total_profit = active_profit + history_profit
+    # Get CLOB client
+    client = get_clob_client()
+    if client is None:
+        st.error("Failed to initialize trading client.")
+        st.stop()
 
-    col1, col2, col3 = st.columns(3)
+    # Render header
+    render_header()
 
-    with col1:
-        if active_profit >= 0:
-            st.markdown(f"<h3 style='color: #00c853;'>Active Locked: +${active_profit:.2f}</h3>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<h3 style='color: #ff5252;'>Active Locked: ${active_profit:.2f}</h3>", unsafe_allow_html=True)
-
-    with col2:
-        if history_profit >= 0:
-            st.markdown(f"<h3 style='color: #888;'>Historical: +${history_profit:.2f}</h3>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<h3 style='color: #ff5252;'>Historical: ${history_profit:.2f}</h3>", unsafe_allow_html=True)
-
-    with col3:
-        if total_profit >= 0:
-            st.markdown(f"<h3 style='color: #1fff9f;'>TOTAL: +${total_profit:.2f}</h3>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<h3 style='color: #ff5252;'>TOTAL: ${total_profit:.2f}</h3>", unsafe_allow_html=True)
-
-    st.divider()
-
-    # =========================================================================
-    # MARKET DETECTION - GAMMA API
-    # =========================================================================
+    # Get all markets
     all_markets = find_all_active_updown_markets()
 
-    # Archive old markets (only those with valid condition_ids)
+    # Archive old markets
     active_ids = [m["condition_id"] for m in all_markets if m.get("condition_id")]
     archive_old_markets(active_ids)
 
-    # =========================================================================
-    # MULTI-MARKET TABS - ALWAYS SHOW ALL 4 COINS
-    # =========================================================================
-
-    # Create tab names with status indicator
-    tab_names = []
+    # Main tabs
+    tab_names = ["DASHBOARD"]
     for m in all_markets:
-        if m.get("active", False):
-            tab_names.append(f"🟢 {m['coin']} 15m")
-        else:
-            tab_names.append(f"⏳ {m['coin']} 15m")
+        status = "🟢" if m.get("active", False) else "⏳"
+        tab_names.append(f"{status} {m['coin']} 15m")
+    tab_names.extend(["JOURNAL", "STATS"])
 
-    # Always use tabs for all 4 coins
     tabs = st.tabs(tab_names)
 
-    for i, tab in enumerate(tabs):
-        with tab:
-            render_market_tab(all_markets[i], client)
+    # Dashboard tab
+    with tabs[0]:
+        render_dashboard_tab(all_markets, client)
 
-    # =========================================================================
-    # HISTORY
-    # =========================================================================
-    history = state.get("history", [])
-    if history:
-        st.divider()
-        with st.expander(f"📊 Market History ({len(history)} completed)"):
-            df_history = pd.DataFrame(history[:20])
-            st.dataframe(df_history, use_container_width=True, hide_index=True)
+    # Market tabs
+    for i, market in enumerate(all_markets):
+        with tabs[i + 1]:
+            render_market_tab(market, client)
 
-    # =========================================================================
-    # REFRESH
-    # =========================================================================
-    st.divider()
+    # Journal tab
+    with tabs[-2]:
+        render_journal_tab()
+
+    # Stats tab
+    with tabs[-1]:
+        render_stats_tab()
+
+    # Refresh
+    st.markdown("---")
 
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        if st.button("🔄 Refresh Now", use_container_width=True):
+        if st.button("Refresh Now", use_container_width=True):
             st.rerun()
 
     # Auto-refresh
