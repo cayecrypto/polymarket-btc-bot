@@ -228,6 +228,15 @@ TERMINAL_CSS = """
         box-shadow: 0 0 20px rgba(0, 255, 106, 0.2);
     }
 
+    .market-card.auto-flash {
+        animation: auto-flash 0.5s ease-out;
+    }
+
+    @keyframes auto-flash {
+        0% { border-color: #00ff6a; box-shadow: 0 0 40px rgba(0, 255, 106, 0.8); }
+        100% { border-color: #1a3025; box-shadow: none; }
+    }
+
     .market-card-header {
         display: flex;
         justify-content: space-between;
@@ -722,6 +731,17 @@ PRICE_SLIPPAGE = 0.006
 BUY_AMOUNTS = [10, 25, 50, 100]
 REFRESH_INTERVAL = 2  # Fast polling for live prices
 
+# =============================================================================
+# AUTO MODE PARAMETERS - GABAGOOL STRATEGY (DO NOT CHANGE)
+# =============================================================================
+TARGET_PAIR_COST = 0.982          # Stop buying when pair cost <= this
+MIN_IMPROVEMENT_REQUIRED = 0.004  # Only buy if projected pair drops by at least 0.4¢
+MAX_DIRECTIONAL_RISK_PCT = 0.35   # Never risk more than 35% of bankroll directionally
+MAX_TRADE_PCT = 0.12              # Max 12% of free capital per trade
+MIN_TRADE_USD = 8                 # Minimum trade size
+MAX_TRADE_USD = 100               # Maximum trade size
+MIN_TIME_REMAINING = 90           # Don't trade with less than 90s remaining
+
 ET = pytz.timezone("US/Eastern")
 
 MINIMAL_ERC20_ABI = [
@@ -820,6 +840,12 @@ if 'wallet_connected' not in st.session_state:
 
 if 'binance_data' not in st.session_state:
     st.session_state.binance_data = {}
+
+if 'auto_mode' not in st.session_state:
+    st.session_state.auto_mode = False
+
+if 'auto_log' not in st.session_state:
+    st.session_state.auto_log = []  # Last 30 auto trades
 
 # =============================================================================
 # BINANCE PRICE DATA
@@ -1506,6 +1532,230 @@ def execute_market_buy(
 
 
 # =============================================================================
+# AUTO MODE FUNCTIONS - GABAGOOL STRATEGY
+# =============================================================================
+
+def evaluate_auto_trade(
+    market: Dict,
+    mstate: Dict,
+    available_usdc: float
+) -> Optional[Dict]:
+    """
+    Evaluate whether to execute an auto trade for this market.
+    Returns trade details dict if should trade, None otherwise.
+
+    STRATEGY: Buy ONLY the cheaper side to improve pair cost.
+    - Never buy both sides at once
+    - Keep adding until avg_yes + avg_no <= TARGET_PAIR_COST
+    - Never sell
+    """
+    if not market.get("active"):
+        return None
+
+    condition_id = market.get("condition_id")
+    if not condition_id:
+        return None
+
+    # Time check - don't trade with less than 90s remaining
+    seconds_remaining = get_seconds_remaining(market.get("end_time"))
+    if seconds_remaining < MIN_TIME_REMAINING and seconds_remaining != 999:
+        return None
+
+    # Get current positions
+    shares_up = mstate.get("shares_up", 0.0)
+    shares_down = mstate.get("shares_down", 0.0)
+    spent_up = mstate.get("spent_up", 0.0)
+    spent_down = mstate.get("spent_down", 0.0)
+
+    # Calculate current average costs
+    avg_up = spent_up / shares_up if shares_up > 0 else 0
+    avg_down = spent_down / shares_down if shares_down > 0 else 0
+
+    # Current pair cost (only if we have positions on BOTH sides)
+    if shares_up > 0 and shares_down > 0:
+        current_pair_cost = avg_up + avg_down
+    else:
+        current_pair_cost = 1.0  # No pair yet, treat as expensive
+
+    # If already at target, skip
+    if current_pair_cost <= TARGET_PAIR_COST:
+        return None
+
+    # Get live market prices
+    up_price = market.get("up_price", 0.5)
+    down_price = market.get("down_price", 0.5)
+
+    # Skip if prices are invalid
+    if up_price <= 0 or down_price <= 0:
+        return None
+
+    # Determine cheaper side
+    if up_price < down_price:
+        cheaper_side = "up"
+        cheaper_price = up_price
+        cheaper_token_id = market.get("up_token_id")
+        current_shares = shares_up
+        current_spent = spent_up
+        other_avg = avg_down if shares_down > 0 else 0.5  # Assume 0.5 if no position
+    else:
+        cheaper_side = "down"
+        cheaper_price = down_price
+        cheaper_token_id = market.get("down_token_id")
+        current_shares = shares_down
+        current_spent = spent_down
+        other_avg = avg_up if shares_up > 0 else 0.5
+
+    if not cheaper_token_id:
+        return None
+
+    # Calculate current imbalance (in USD terms)
+    current_imbalance_usd = abs((shares_up * up_price) - (shares_down * down_price))
+
+    # Dynamic sizing based on pair cost urgency
+    base_trade_usd = available_usdc * MAX_TRADE_PCT
+
+    if current_pair_cost > 0.980:
+        multiplier = 1.0   # Panic mode - full size
+    elif current_pair_cost > 0.975:
+        multiplier = 0.85
+    else:
+        multiplier = 0.6
+
+    trade_usd = base_trade_usd * multiplier
+    trade_usd = max(MIN_TRADE_USD, min(MAX_TRADE_USD, trade_usd))
+
+    # Make sure we have enough capital
+    if trade_usd > available_usdc:
+        return None
+
+    # Calculate projected outcome
+    projected_shares = current_shares + (trade_usd / cheaper_price)
+    projected_spent = current_spent + trade_usd
+    projected_avg_cheaper = projected_spent / projected_shares
+
+    # Projected pair cost
+    if cheaper_side == "up":
+        projected_pair = projected_avg_cheaper + other_avg
+    else:
+        projected_pair = other_avg + projected_avg_cheaper
+
+    # Check improvement threshold (at least 0.4¢ improvement)
+    improvement = current_pair_cost - projected_pair
+    if improvement < MIN_IMPROVEMENT_REQUIRED:
+        return None
+
+    # Check projected pair is at or below target
+    if projected_pair > TARGET_PAIR_COST:
+        return None
+
+    # Check directional risk limit (35% of bankroll)
+    projected_imbalance = current_imbalance_usd + trade_usd
+    if projected_imbalance > available_usdc * MAX_DIRECTIONAL_RISK_PCT:
+        return None
+
+    # All checks passed - return trade details
+    return {
+        "coin": market["coin"],
+        "side": cheaper_side,
+        "token_id": cheaper_token_id,
+        "trade_usd": trade_usd,
+        "current_pair": current_pair_cost,
+        "projected_pair": projected_pair,
+        "improvement": improvement,
+        "seconds_remaining": seconds_remaining,
+    }
+
+
+def execute_auto_trade(
+    trade_info: Dict,
+    market: Dict,
+    mstate: Dict,
+    client: ClobClient
+) -> Tuple[bool, str, float]:
+    """Execute an auto trade and log it."""
+
+    coin = trade_info["coin"]
+    side = trade_info["side"]
+    token_id = trade_info["token_id"]
+    trade_usd = trade_info["trade_usd"]
+    seconds_remaining = trade_info["seconds_remaining"]
+
+    # Execute the buy
+    success, msg, filled_shares, actual_cost = execute_market_buy(
+        client, token_id, side, trade_usd,
+        mstate, seconds_remaining, coin
+    )
+
+    if success:
+        # Calculate profit locked by this trade
+        new_metrics = calculate_metrics(mstate)
+
+        # Log to auto log
+        auto_entry = {
+            "time": datetime.now(ET).strftime("%H:%M:%S"),
+            "coin": coin,
+            "side": side.upper(),
+            "size": round(actual_cost, 2),
+            "old_pair": round(trade_info["current_pair"], 4),
+            "new_pair": round(trade_info["projected_pair"], 4),
+            "locked": round(new_metrics["locked_profit"], 2),
+            "tag": "AUTO"
+        }
+        st.session_state.auto_log.insert(0, auto_entry)
+        st.session_state.auto_log = st.session_state.auto_log[:30]
+
+        print(f"[AUTO] {coin} {side.upper()} ${actual_cost:.2f} | pair: {trade_info['current_pair']:.4f} → {trade_info['projected_pair']:.4f}")
+
+        return True, f"AUTO: {coin} {side.upper()} ${actual_cost:.2f}", actual_cost
+
+    return False, msg, 0
+
+
+def run_auto_mode_cycle(markets: List[Dict], client: ClobClient) -> List[str]:
+    """Run one cycle of auto mode across all markets."""
+
+    if not st.session_state.auto_mode:
+        return []
+
+    messages = []
+
+    # Get available capital
+    usdc_balance = get_usdc_balance() or 0
+    available_usdc = usdc_balance - 5  # Keep $5 buffer
+
+    if available_usdc < MIN_TRADE_USD:
+        return []
+
+    # Evaluate each market
+    for market in markets:
+        if not market.get("active"):
+            continue
+
+        condition_id = market.get("condition_id")
+        if not condition_id:
+            continue
+
+        mstate = get_market_state(condition_id, market["coin"])
+
+        # Evaluate if we should trade
+        trade_info = evaluate_auto_trade(market, mstate, available_usdc)
+
+        if trade_info:
+            # Execute the trade
+            success, msg, cost = execute_auto_trade(trade_info, market, mstate, client)
+            messages.append(msg)
+
+            if success:
+                # Update available capital
+                available_usdc -= cost
+
+                # Small delay between trades
+                time.sleep(0.5)
+
+    return messages
+
+
+# =============================================================================
 # COMPUTED METRICS
 # =============================================================================
 
@@ -2010,6 +2260,83 @@ def render_bottom_ticker():
     """, unsafe_allow_html=True)
 
 
+def render_auto_toggle():
+    """Render the AUTO mode toggle switch - big prominent button."""
+    is_on = st.session_state.auto_mode
+
+    # Inject pulsing CSS when ON
+    if is_on:
+        st.markdown("""
+        <style>
+        div[data-testid="stButton"] button[kind="primary"] {
+            background: linear-gradient(145deg, #0d3820, #1a5c35) !important;
+            border: 2px solid #00ff6a !important;
+            box-shadow: 0 0 20px rgba(0, 255, 106, 0.4) !important;
+            animation: pulse-auto 2s infinite !important;
+            font-size: 16px !important;
+            font-weight: 800 !important;
+            letter-spacing: 2px !important;
+        }
+        @keyframes pulse-auto {
+            0%, 100% { box-shadow: 0 0 20px rgba(0, 255, 106, 0.4); }
+            50% { box-shadow: 0 0 35px rgba(0, 255, 106, 0.8); }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <style>
+        div[data-testid="stButton"] button[kind="secondary"] {
+            background: linear-gradient(145deg, #2a1515, #3a2020) !important;
+            border: 2px solid #ff4d4d !important;
+            color: #ff4d4d !important;
+            font-size: 16px !important;
+            font-weight: 800 !important;
+            letter-spacing: 2px !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        btn_label = "🟢 AUTO: ON — PRINTING" if is_on else "🔴 AUTO: OFF"
+        btn_type = "primary" if is_on else "secondary"
+
+        if st.button(btn_label, key="auto_toggle", type=btn_type, use_container_width=True):
+            st.session_state.auto_mode = not st.session_state.auto_mode
+            st.rerun()
+
+
+def render_auto_log():
+    """Render expandable auto trade log."""
+    auto_log = st.session_state.auto_log
+
+    if not auto_log:
+        return
+
+    # Calculate total auto profit
+    total_auto_profit = sum(entry.get("locked", 0) for entry in auto_log)
+
+    with st.expander(f"🤖 AUTO LOG ({len(auto_log)} trades) — ${total_auto_profit:.2f} total locked"):
+        log_html = '<div style="font-family: JetBrains Mono; font-size: 11px;">'
+
+        for entry in auto_log[:30]:
+            time_str = entry.get("time", "")
+            coin = entry.get("coin", "")
+            side = entry.get("side", "")
+            size = entry.get("size", 0)
+            old_pair = entry.get("old_pair", 0)
+            new_pair = entry.get("new_pair", 0)
+            locked = entry.get("locked", 0)
+
+            side_color = "#00cc55" if side == "UP" else "#ff6b6b"
+
+            log_html += f'<div style="padding: 6px 0; border-bottom: 1px solid #1a3025; display: flex; justify-content: space-between; align-items: center;"><span style="color: #5a8a6a;">{time_str}</span><span style="color: #e0e0e0; font-weight: 700;">{coin}</span><span style="color: {side_color}; font-weight: 600;">{side}</span><span style="color: #7a9a8a;">${size:.0f}</span><span style="color: #5a8a6a;">{old_pair:.3f}→{new_pair:.3f}</span><span style="color: #00ff6a; font-weight: 700;">+${locked:.2f}</span></div>'
+
+        log_html += '</div>'
+        st.markdown(log_html, unsafe_allow_html=True)
+
+
 # =============================================================================
 # MAIN APPLICATION
 # =============================================================================
@@ -2107,6 +2434,16 @@ def main():
     # Render top bar
     render_top_bar(stats, total_profit)
 
+    # AUTO MODE toggle
+    render_auto_toggle()
+
+    # Run auto mode cycle if enabled
+    if st.session_state.auto_mode and client:
+        auto_messages = run_auto_mode_cycle(all_markets, client)
+        # Show toast notifications for auto trades
+        for msg in auto_messages:
+            st.toast(msg, icon="🤖")
+
     # Main layout: two columns
     left_col, right_col = st.columns([1, 2])
 
@@ -2132,6 +2469,9 @@ def main():
 
         # Opportunities panel
         st.markdown(render_opportunities_panel(), unsafe_allow_html=True)
+
+        # Auto log (if any auto trades)
+        render_auto_log()
 
     # Bottom ticker
     render_bottom_ticker()
