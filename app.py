@@ -311,6 +311,66 @@ TERMINAL_CSS = """
     .pair-cost.marginal { color: #ffd93d; }
     .pair-cost.bad { color: #ff4d4d; }
 
+    .locked-inline {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+        color: #00ff6a;
+        font-weight: 600;
+    }
+
+    /* COUNTDOWN TIMER */
+    .market-countdown {
+        text-align: right;
+    }
+
+    .countdown-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 18px;
+        font-weight: 700;
+    }
+
+    .countdown-label {
+        font-size: 9px;
+        color: #5a8a6a;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .countdown-normal .countdown-value {
+        color: #00ff6a;
+    }
+
+    .countdown-urgent .countdown-value {
+        color: #ff4d4d;
+        animation: pulse-urgent 1s infinite;
+    }
+
+    .countdown-inactive .countdown-value {
+        color: #5a6a5a;
+    }
+
+    @keyframes pulse-urgent {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    /* LIVE CRYPTO PRICE */
+    .coin-live-price {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+        color: #e0e0e0;
+        margin-left: 8px;
+    }
+
+    .coin-change {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        margin-left: 4px;
+    }
+
+    .coin-change.up { color: #00ff6a; }
+    .coin-change.down { color: #ff4d4d; }
+
     /* PRICE ROW */
     .price-row {
         display: flex;
@@ -660,7 +720,7 @@ WARN_IMBALANCE = 400
 NO_TRADE_SECONDS = 90
 PRICE_SLIPPAGE = 0.006
 BUY_AMOUNTS = [10, 25, 50, 100]
-REFRESH_INTERVAL = 8
+REFRESH_INTERVAL = 2  # Fast polling for live prices
 
 ET = pytz.timezone("US/Eastern")
 
@@ -1583,9 +1643,16 @@ def import_state_json(json_str: str) -> bool:
 # =============================================================================
 
 def log_opportunity(coin: str, pair_cost: float, up_price: float, down_price: float):
-    """Log market opportunity for tracking."""
+    """Log market opportunity for tracking. Only logs edges >= 0.5%."""
+    MIN_EDGE_PCT = 0.5  # Only log opportunities with at least 0.5% edge
+
     if pair_cost < 1.0:
         edge = (1.0 - pair_cost) * 100
+
+        # Only log if edge is significant enough
+        if edge < MIN_EDGE_PCT:
+            return
+
         opp = {
             "time": datetime.now(ET).strftime("%H:%M"),
             "coin": coin,
@@ -1795,23 +1862,41 @@ def render_market_card(market: Dict, binance_data: Dict, client: ClobClient, idx
     # Edge class
     edge_class = "edge" if pair_cost < 0.98 and is_active else ""
 
+    # Format countdown timer
+    if seconds_remaining < 999 and seconds_remaining > 0:
+        mins = seconds_remaining // 60
+        secs = seconds_remaining % 60
+        countdown_str = f"{mins}:{secs:02d}"
+        countdown_class = "countdown-urgent" if seconds_remaining < 60 else "countdown-normal"
+    else:
+        countdown_str = "--:--"
+        countdown_class = "countdown-inactive"
+
+    # Format crypto price
+    if b_price > 0:
+        price_str = f"${b_price:,.2f}" if b_price < 100 else f"${b_price:,.0f}"
+        change_str = f'<span class="coin-change {change_class}">{change_sign}{b_change:.2f}%</span>'
+    else:
+        price_str = ""
+        change_str = ""
+
     card_html = f"""
     <div class="market-card {edge_class}">
         <div class="market-card-header">
             <div class="coin-badge">
                 <span class="coin-symbol" style="color: {coin_color};">{coin}</span>
-                <span class="coin-price">15m</span>
-                {f'<span class="coin-price">{format_price(b_price)}</span>' if b_price > 0 else ''}
-                {f'<span class="coin-change {change_class}">({change_sign}{b_change:.2f}%)</span>' if b_price > 0 else ''}
+                <span class="coin-live-price">{price_str}</span>
+                {change_str}
             </div>
-            <div class="market-locked">
-                <div class="locked-value">+${locked_profit:.2f}</div>
-                <div class="locked-label">LOCKED</div>
+            <div class="market-countdown {countdown_class}">
+                <div class="countdown-value">{countdown_str}</div>
+                <div class="countdown-label">LEFT</div>
             </div>
         </div>
         <div class="pair-row">
             <span class="pair-label">PAIR</span>
             <span class="pair-cost {pair_class}">{pair_cost:.4f}</span>
+            <span class="locked-inline">+${locked_profit:.2f}</span>
         </div>
         <div class="price-row">
             <span>Up <span class="price-up">{up_price:.3f}</span></span>
@@ -1873,13 +1958,23 @@ def render_opportunities_panel():
 
         opps_html += f'<div class="opp-row"><span class="opp-time">{time_str}</span><span class="opp-coin">{coin_str}</span><span class="opp-pair">{pair_val:.3f}</span><span class="opp-edge">edge {edge_val:.1f}%</span>{best_badge}</div>'
 
-    # Calculate missed profit estimate
-    missed_profit = sum(opp.get("edge", 0) * 10 for opp in opportunities[:12]) / 100  # Assume $10 per opportunity
+    # Calculate missed profit estimate based on average trade size from history
+    trade_log = st.session_state.state.get("trade_log", [])
+    if trade_log:
+        avg_trade_size = sum(t.get("usdc", 0) for t in trade_log[:20]) / max(len(trade_log[:20]), 1)
+        avg_trade_size = max(avg_trade_size, 10)  # Minimum $10
+    else:
+        avg_trade_size = 25  # Default assumption
+
+    # Calculate potential profit: edge% * trade_size * 2 (because you bet on both sides)
+    # Only count good edges (already filtered by log_opportunity)
+    missed_profit = sum(opp.get("edge", 0) * avg_trade_size * 2 for opp in opportunities[:12]) / 100
+    opp_count = len([o for o in opportunities[:12] if o.get("edge", 0) >= 0.5])
 
     if not opps_html:
-        opps_html = '<div style="color: #5a8a6a; text-align: center; padding: 20px;">No opportunities logged yet</div>'
+        opps_html = '<div style="color: #5a8a6a; text-align: center; padding: 20px;">No good opportunities yet (need ≥0.5% edge)</div>'
 
-    return f'<div class="opportunities-panel"><div class="panel-header"><span class="panel-title">LAST 12 OPPORTUNITIES</span></div>{opps_html}<div class="missed-profit">Estimated missed if sleeping: <span class="missed-value">+${missed_profit:.2f}</span></div></div>'
+    return f'<div class="opportunities-panel"><div class="panel-header"><span class="panel-title">LAST {opp_count} GOOD OPPORTUNITIES</span></div>{opps_html}<div class="missed-profit">Est. missed @ ${avg_trade_size:.0f}/trade: <span class="missed-value">+${missed_profit:.2f}</span></div></div>'
 
 
 def render_bottom_ticker():
