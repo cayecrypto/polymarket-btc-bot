@@ -812,6 +812,51 @@ def format_binance_price(coin: str, binance_data: Dict) -> str:
 
 
 # =============================================================================
+# CLOB LIVE PRICE FETCHING - THE REAL EDGE!
+# =============================================================================
+
+def get_clob_midpoints(up_token_id: str, down_token_id: str) -> Tuple[float, float]:
+    """
+    Fetch LIVE prices from CLOB /midpoint API.
+
+    THIS IS THE ONLY SOURCE OF REAL TRADEABLE PRICES!
+
+    Gamma API outcomePrices is STALE and always sums to 1.0 (theoretical).
+    CLOB midpoint shows the actual market prices where edges exist.
+
+    Example:
+        Gamma (STALE): Up=0.355 + Down=0.645 = 1.0000 ← WRONG!
+        CLOB (LIVE):   Up=0.96  + Down=0.035 = 0.995  ← THE EDGE!
+    """
+    up_price = 0.5
+    down_price = 0.5
+
+    try:
+        # Get Up price from CLOB
+        r = requests.get(
+            f"https://clob.polymarket.com/midpoint?token_id={up_token_id}",
+            timeout=3
+        )
+        if r.status_code == 200:
+            up_price = float(r.json().get("mid", 0.5))
+    except Exception:
+        pass
+
+    try:
+        # Get Down price from CLOB
+        r = requests.get(
+            f"https://clob.polymarket.com/midpoint?token_id={down_token_id}",
+            timeout=3
+        )
+        if r.status_code == 200:
+            down_price = float(r.json().get("mid", 0.5))
+    except Exception:
+        pass
+
+    return up_price, down_price
+
+
+# =============================================================================
 # PLOTLY CHART FUNCTIONS
 # =============================================================================
 
@@ -1231,60 +1276,13 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
                 outcomes = outcomes_raw
 
             # ============================================================
-            # CRITICAL FIX: Get prices from TOKENS array, not outcomePrices
-            # The tokens array has live prices that update in real-time
+            # LIVE PRICE EXTRACTION FROM CLOB API
+            # DO NOT USE Gamma outcomePrices - they're stale/theoretical!
+            # CLOB /midpoint gives real tradeable prices where edges exist
             # ============================================================
-            tokens = market.get("tokens", [])
-
-            # Default prices
-            up_price = 0.5
-            down_price = 0.5
-
-            if tokens and len(tokens) >= 2:
-                # Tokens array contains objects with "outcome" and "price" fields
-                for token in tokens:
-                    token_outcome = str(token.get("outcome", "")).lower()
-                    token_price = token.get("price")
-
-                    if token_price is not None:
-                        try:
-                            price_val = float(token_price)
-                            if token_outcome == "up":
-                                up_price = price_val
-                            elif token_outcome == "down":
-                                down_price = price_val
-                        except (ValueError, TypeError):
-                            pass
-
-            # Fallback to outcomePrices if tokens didn't work
-            if up_price == 0.5 and down_price == 0.5:
-                prices_raw = market.get("outcomePrices", ["0.5", "0.5"])
-                if isinstance(prices_raw, str):
-                    try:
-                        prices = json.loads(prices_raw)
-                    except:
-                        prices = ["0.5", "0.5"]
-                else:
-                    prices = prices_raw
-
-                if len(token_ids) >= 2 and len(outcomes) >= 2:
-                    up_idx, down_idx = 0, 1
-                    for i, outcome in enumerate(outcomes):
-                        if str(outcome).lower() == "up":
-                            up_idx = i
-                        elif str(outcome).lower() == "down":
-                            down_idx = i
-
-                    try:
-                        up_price = float(prices[up_idx]) if len(prices) > up_idx else 0.5
-                    except:
-                        up_price = 0.5
-                    try:
-                        down_price = float(prices[down_idx]) if len(prices) > down_idx else 0.5
-                    except:
-                        down_price = 0.5
 
             if len(token_ids) >= 2 and len(outcomes) >= 2:
+                # Find up/down token indices
                 up_idx, down_idx = 0, 1
                 for i, outcome in enumerate(outcomes):
                     if str(outcome).lower() == "up":
@@ -1292,6 +1290,13 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
                     elif str(outcome).lower() == "down":
                         down_idx = i
 
+                up_token_id = token_ids[up_idx]
+                down_token_id = token_ids[down_idx]
+
+                # GET LIVE PRICES FROM CLOB API - THE REAL EDGE!
+                up_price, down_price = get_clob_midpoints(up_token_id, down_token_id)
+
+                # Parse end time
                 end_time = None
                 end_date_str = market.get("endDate") or market.get("end_date_iso")
                 if end_date_str:
@@ -1309,8 +1314,8 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
                     "question": market.get("question", f"{coin.upper()} Up or Down"),
                     "slug": slug,
                     "end_time": end_time,
-                    "up_token_id": token_ids[up_idx],
-                    "down_token_id": token_ids[down_idx],
+                    "up_token_id": up_token_id,
+                    "down_token_id": down_token_id,
                     "up_price": up_price,
                     "down_price": down_price,
                     "active": True,
