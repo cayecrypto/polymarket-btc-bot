@@ -567,6 +567,24 @@ TERMINAL_CSS = """
         font-weight: 700;
     }
 
+    .cumulative-missed {
+        margin-top: 6px;
+        padding: 8px;
+        background: linear-gradient(145deg, #2a1a1a, #1a1010);
+        border: 1px solid #ff6b6b;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 700;
+        color: #ff6b6b;
+        text-align: center;
+    }
+
+    .cumulative-value {
+        color: #ff4d4d;
+        font-weight: 800;
+        font-size: 14px;
+    }
+
     /* BOTTOM TICKER */
     .bottom-ticker {
         background: linear-gradient(90deg, #0d1810 0%, #0f1f18 50%, #0d1810 100%);
@@ -842,6 +860,8 @@ if 'state' not in st.session_state:
         "total_trades": 0,
         "daily_pnl": {},
         "opportunities": [],
+        "cumulative_missed_profit": 0.0,  # Running total of missed profit
+        "cumulative_missed_count": 0,      # Total opportunities missed
     }
 
 defaults = {
@@ -854,6 +874,8 @@ defaults = {
     "total_trades": 0,
     "daily_pnl": {},
     "opportunities": [],
+    "cumulative_missed_profit": 0.0,
+    "cumulative_missed_count": 0,
 }
 
 for key, default in defaults.items():
@@ -1933,19 +1955,33 @@ def log_opportunity(coin: str, pair_cost: float, up_price: float, down_price: fl
         if edge < MIN_EDGE_PCT:
             return
 
+        # Calculate missed profit for this opportunity using bankroll-based sizing
+        usdc_balance = get_usdc_balance() or 0
+        available_usdc = max(usdc_balance - 5, 0)
+        trade_size = available_usdc * MAX_TRADE_PCT
+        trade_size = max(MIN_TRADE_USD, min(MAX_TRADE_USD, trade_size))
+        missed_profit_this = (edge / 100) * trade_size
+
         opp = {
             "time": datetime.now(ET).strftime("%H:%M"),
             "coin": coin,
             "pair_cost": pair_cost,
             "edge": edge,
             "up": up_price,
-            "down": down_price
+            "down": down_price,
+            "missed_profit": missed_profit_this,
+            "trade_size": trade_size,
         }
         opportunities = st.session_state.state.get("opportunities", [])
         # Avoid duplicates within same minute
         if not opportunities or opportunities[0].get("time") != opp["time"] or opportunities[0].get("coin") != coin:
             opportunities.insert(0, opp)
             st.session_state.state["opportunities"] = opportunities[:50]
+
+            # Accumulate missed profit (only if AUTO MODE is OFF - if ON, we're trading it!)
+            if not st.session_state.auto_mode:
+                st.session_state.state["cumulative_missed_profit"] = st.session_state.state.get("cumulative_missed_profit", 0.0) + missed_profit_this
+                st.session_state.state["cumulative_missed_count"] = st.session_state.state.get("cumulative_missed_count", 0) + 1
 
 
 # =============================================================================
@@ -2273,9 +2309,23 @@ def render_opportunities_panel():
     if not opps_html:
         opps_html = '<div style="color: #5a8a6a; text-align: center; padding: 20px;">No good opportunities yet (need ≥0.5% edge)</div>'
 
-    # Show bankroll info in the missed profit calculation
+    # Get cumulative totals
+    cumulative_missed = st.session_state.state.get("cumulative_missed_profit", 0.0)
+    cumulative_count = st.session_state.state.get("cumulative_missed_count", 0)
+
+    # Get session start time
+    session_start = st.session_state.state.get("session_start", "")
+    try:
+        start_dt = datetime.fromisoformat(session_start)
+        session_duration = datetime.now(ET) - start_dt.replace(tzinfo=ET)
+        hours = session_duration.total_seconds() / 3600
+        duration_str = f"{hours:.1f}h"
+    except:
+        duration_str = "??h"
+
+    # Show bankroll info and cumulative total
     bankroll_pct = int(MAX_TRADE_PCT * 100)
-    return f'<div class="opportunities-panel"><div class="panel-header"><span class="panel-title">LAST {opp_count} GOOD OPPORTUNITIES</span></div>{opps_html}<div class="missed-profit">Est. missed @ ${dynamic_trade_size:.0f}/trade ({bankroll_pct}% of ${available_usdc:.0f}): <span class="missed-value">+${missed_profit:.2f}</span></div></div>'
+    return f'<div class="opportunities-panel"><div class="panel-header"><span class="panel-title">OPPORTUNITIES ({opp_count} recent)</span></div>{opps_html}<div class="missed-profit">Recent @ ${dynamic_trade_size:.0f}/trade: <span class="missed-value">+${missed_profit:.2f}</span></div><div class="cumulative-missed">SESSION TOTAL ({duration_str}, {cumulative_count} opps): <span class="cumulative-value">+${cumulative_missed:.2f}</span></div></div>'
 
 
 def render_bottom_ticker():
