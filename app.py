@@ -1514,7 +1514,12 @@ def execute_market_buy(
         return False, reason, 0, 0
 
     try:
-        ob = client.get_order_book(token_id)
+        try:
+            ob = client.get_order_book(token_id)
+        except Exception as e:
+            error_str = str(e)[:80]
+            return False, f"Order book error: {error_str}", 0, 0
+
         if not ob.asks:
             return False, "No asks available", 0, 0
 
@@ -1533,7 +1538,11 @@ def execute_market_buy(
             side="BUY"
         )
 
-        response = client.create_and_post_order(order_args)
+        try:
+            response = client.create_and_post_order(order_args)
+        except Exception as e:
+            error_str = str(e)[:80]
+            return False, f"Order API error: {error_str}", 0, 0
 
         if not response or "orderID" not in response:
             error_msg = response.get("error", "Unknown error") if response else "No response"
@@ -1759,14 +1768,30 @@ def execute_auto_trade(
             "old_pair": round(trade_info["current_pair"], 4),
             "new_pair": round(trade_info["projected_pair"], 4),
             "locked": round(new_metrics["locked_profit"], 2),
-            "tag": "AUTO"
+            "status": "OK"
         }
         st.session_state.auto_log.insert(0, auto_entry)
         st.session_state.auto_log = st.session_state.auto_log[:30]
 
-        print(f"[AUTO] {coin} {side.upper()} ${actual_cost:.2f} | pair: {trade_info['current_pair']:.4f} → {trade_info['projected_pair']:.4f}")
+        # Rate limit protection: sleep after successful trade
+        time.sleep(1.5)
 
         return True, f"AUTO: {coin} {side.upper()} ${actual_cost:.2f}", actual_cost
+
+    # Log failed trade
+    fail_entry = {
+        "time": datetime.now(ET).strftime("%H:%M:%S"),
+        "coin": coin,
+        "side": side.upper(),
+        "size": round(trade_usd, 2),
+        "old_pair": round(trade_info["current_pair"], 4),
+        "new_pair": 0,
+        "locked": 0,
+        "status": "FAILED",
+        "error": msg[:40]
+    }
+    st.session_state.auto_log.insert(0, fail_entry)
+    st.session_state.auto_log = st.session_state.auto_log[:30]
 
     return False, msg, 0
 
@@ -2490,10 +2515,17 @@ def render_auto_log():
     if not auto_log:
         return
 
-    # Calculate total auto profit
-    total_auto_profit = sum(entry.get("locked", 0) for entry in auto_log)
+    # Calculate total auto profit (only from successful trades)
+    total_auto_profit = sum(entry.get("locked", 0) for entry in auto_log if entry.get("status") != "FAILED")
+    success_count = sum(1 for entry in auto_log if entry.get("status") != "FAILED")
+    fail_count = sum(1 for entry in auto_log if entry.get("status") == "FAILED")
 
-    with st.expander(f"🤖 AUTO LOG ({len(auto_log)} trades) — ${total_auto_profit:.2f} total locked"):
+    header = f"🤖 AUTO LOG ({success_count} OK"
+    if fail_count > 0:
+        header += f", {fail_count} failed"
+    header += f") — ${total_auto_profit:.2f} locked"
+
+    with st.expander(header):
         log_html = '<div style="font-family: JetBrains Mono; font-size: 11px;">'
 
         for entry in auto_log[:30]:
@@ -2504,10 +2536,16 @@ def render_auto_log():
             old_pair = entry.get("old_pair", 0)
             new_pair = entry.get("new_pair", 0)
             locked = entry.get("locked", 0)
+            status = entry.get("status", "OK")
+            error = entry.get("error", "")
 
-            side_color = "#00cc55" if side == "UP" else "#ff6b6b"
-
-            log_html += f'<div style="padding: 6px 0; border-bottom: 1px solid #1a3025; display: flex; justify-content: space-between; align-items: center;"><span style="color: #5a8a6a;">{time_str}</span><span style="color: #e0e0e0; font-weight: 700;">{coin}</span><span style="color: {side_color}; font-weight: 600;">{side}</span><span style="color: #7a9a8a;">${size:.0f}</span><span style="color: #5a8a6a;">{old_pair:.3f}→{new_pair:.3f}</span><span style="color: #00ff6a; font-weight: 700;">+${locked:.2f}</span></div>'
+            if status == "FAILED":
+                # Failed trade - show in red
+                log_html += f'<div style="padding: 6px 0; border-bottom: 1px solid #3a2020; background: #1a0808; display: flex; justify-content: space-between; align-items: center;"><span style="color: #ff4444;">{time_str}</span><span style="color: #ff6666; font-weight: 700;">{coin}</span><span style="color: #ff4444; font-weight: 600;">FAILED</span><span style="color: #ff6666;">${size:.0f}</span><span style="color: #ff4444; font-size: 10px;">{error}</span></div>'
+            else:
+                # Successful trade
+                side_color = "#00cc55" if side == "UP" else "#ff6b6b"
+                log_html += f'<div style="padding: 6px 0; border-bottom: 1px solid #1a3025; display: flex; justify-content: space-between; align-items: center;"><span style="color: #5a8a6a;">{time_str}</span><span style="color: #e0e0e0; font-weight: 700;">{coin}</span><span style="color: {side_color}; font-weight: 600;">{side}</span><span style="color: #7a9a8a;">${size:.0f}</span><span style="color: #5a8a6a;">{old_pair:.3f}→{new_pair:.3f}</span><span style="color: #00ff6a; font-weight: 700;">+${locked:.2f}</span></div>'
 
         log_html += '</div>'
         st.markdown(log_html, unsafe_allow_html=True)
