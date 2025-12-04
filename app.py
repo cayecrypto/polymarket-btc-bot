@@ -1261,19 +1261,26 @@ def get_clob_client() -> Optional[ClobClient]:
                 pk = env_private_key.strip()
                 if not pk.startswith("0x"):
                     pk = "0x" + pk
+                # Get wallet address for funder parameter
+                wallet_account = Account.from_key(pk)
+                funder_address = wallet_account.address
+
+                # signature_type=2 for browser proxy wallets (Polymarket website API keys)
                 client = ClobClient(
                     host=CLOB_HOST,
                     key=pk,
                     chain_id=CHAIN_ID,
-                    creds=creds
+                    creds=creds,
+                    signature_type=2,
+                    funder=funder_address
                 )
             else:
                 # No private key - create client with just creds
-                # This may not work for all operations
                 client = ClobClient(
                     host=CLOB_HOST,
                     chain_id=CHAIN_ID,
-                    creds=creds
+                    creds=creds,
+                    signature_type=2
                 )
             st.session_state.client = client
             st.session_state.api_cred_status = "official API"
