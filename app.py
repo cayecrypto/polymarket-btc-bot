@@ -1270,18 +1270,21 @@ def get_clob_client() -> Optional[ClobClient]:
                     host=CLOB_HOST,
                     key=pk,
                     chain_id=CHAIN_ID,
-                    creds=creds,
                     signature_type=2,
                     funder=funder_address
                 )
+                # CRITICAL: Must call set_api_creds() to activate credentials
+                # The creds parameter in constructor is IGNORED by py-clob-client
+                client.set_api_creds(creds)
             else:
                 # No private key - create client with just creds
                 client = ClobClient(
                     host=CLOB_HOST,
                     chain_id=CHAIN_ID,
-                    creds=creds,
                     signature_type=2
                 )
+                # CRITICAL: Must call set_api_creds() to activate credentials
+                client.set_api_creds(creds)
             st.session_state.client = client
             st.session_state.api_cred_status = "official API"
             return client
