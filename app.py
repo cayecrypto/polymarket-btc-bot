@@ -540,6 +540,14 @@ DARK_THEME_CSS = """
 # Inject CSS
 st.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
 
+# Show title immediately (prevents blank screen)
+st.markdown("""
+<div style='text-align: center; padding: 20px;'>
+    <h1 style='color: #00c853; margin: 0;'>💎 POLYMARKET 15-MIN COMBO PRINTER</h1>
+    <p style='color: #888; margin-top: 5px;'>gabagool style • Dec 2025</p>
+</div>
+""", unsafe_allow_html=True)
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -688,15 +696,18 @@ def get_binance_data() -> Dict[str, Dict]:
     """
     Fetch live prices from Binance for all supported coins.
     Returns dict: {symbol: {"price": float, "change": float}}
+    Uses Binance.US API for US-based servers (Streamlit Cloud).
+    Falls back to CoinGecko if Binance fails.
     """
     symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"]
     data = {}
 
+    # Try Binance.US first (works from US servers)
     for sym in symbols:
         try:
             r = requests.get(
-                f"https://api.binance.com/api/v3/ticker/24hr?symbol={sym}",
-                timeout=5
+                f"https://api.binance.us/api/v3/ticker/24hr?symbol={sym}",
+                timeout=3
             )
             if r.status_code == 200:
                 j = r.json()
@@ -708,6 +719,30 @@ def get_binance_data() -> Dict[str, Dict]:
                 data[sym] = {"price": 0.0, "change": 0.0}
         except Exception:
             data[sym] = {"price": 0.0, "change": 0.0}
+
+    # If all failed, try CoinGecko as fallback
+    if all(d["price"] == 0.0 for d in data.values()):
+        try:
+            cg_ids = "bitcoin,ethereum,solana,ripple"
+            r = requests.get(
+                f"https://api.coingecko.com/api/v3/simple/price?ids={cg_ids}&vs_currencies=usd&include_24hr_change=true",
+                timeout=5
+            )
+            if r.status_code == 200:
+                j = r.json()
+                mapping = {
+                    "BTCUSDT": ("bitcoin", j.get("bitcoin", {})),
+                    "ETHUSDT": ("ethereum", j.get("ethereum", {})),
+                    "SOLUSDT": ("solana", j.get("solana", {})),
+                    "XRPUSDT": ("ripple", j.get("ripple", {}))
+                }
+                for sym, (_, info) in mapping.items():
+                    data[sym] = {
+                        "price": float(info.get("usd", 0)),
+                        "change": float(info.get("usd_24h_change", 0))
+                    }
+        except Exception:
+            pass
 
     return data
 
