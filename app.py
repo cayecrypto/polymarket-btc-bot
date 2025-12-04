@@ -2114,12 +2114,19 @@ def render_sidebar():
         api_key = os.environ.get("POLYMARKET_API_KEY")
         api_secret = os.environ.get("POLYMARKET_API_SECRET")
         api_passphrase = os.environ.get("POLYMARKET_API_PASSPHRASE")
+        env_private_key = os.environ.get("POLYMARKET_PRIVATE_KEY")
 
         if api_key and api_secret and api_passphrase and not st.session_state.wallet_connected:
             # Auto-connect with official API
             st.session_state.wallet_connected = True
             st.session_state.rpc_url = "https://polygon-rpc.com"
             st.session_state.api_cred_status = "official API"
+            # Also set private key from env if available (for balance queries)
+            if env_private_key:
+                pk = env_private_key.strip()
+                if not pk.startswith("0x"):
+                    pk = "0x" + pk
+                st.session_state.private_key = pk
 
         if not st.session_state.wallet_connected:
             private_key_input = st.text_input(
@@ -2153,20 +2160,32 @@ def render_sidebar():
             return False  # Signal wallet not connected
 
         try:
-            # Check if using official API (no wallet address available)
+            # Check if using official API
             api_key = os.environ.get("POLYMARKET_API_KEY")
             using_official_api = bool(api_key and os.environ.get("POLYMARKET_API_SECRET"))
 
-            if using_official_api:
+            # Check if we have a private key for balance queries (either from manual input or env var)
+            has_private_key = bool(st.session_state.get("private_key"))
+
+            if has_private_key:
+                # Can query balance with private key
+                wallet_addr = get_wallet_address()
+                usdc_bal = get_usdc_balance() or 0
+                matic_bal = get_matic_balance() or 0
+                display_addr = f"{wallet_addr[:6]}...{wallet_addr[-4:]}"
+                if using_official_api:
+                    display_addr += " (API)"
+            elif using_official_api:
+                # Official API without private key - can't query balance
                 wallet_addr = "API Mode"
-                usdc_bal = 0  # Can't query balance without wallet
+                usdc_bal = 0
                 matic_bal = 0
+                display_addr = "Official API (no balance)"
             else:
                 wallet_addr = get_wallet_address()
                 usdc_bal = get_usdc_balance() or 0
                 matic_bal = get_matic_balance() or 0
-
-            display_addr = "Official API" if using_official_api else f"{wallet_addr[:6]}...{wallet_addr[-4:]}"
+                display_addr = f"{wallet_addr[:6]}...{wallet_addr[-4:]}"
 
             st.markdown(f"""
             <div style='background: #111916; padding: 12px; border-radius: 6px; border: 1px solid #1a3025; margin-bottom: 12px;'>
@@ -2175,7 +2194,8 @@ def render_sidebar():
             </div>
             """, unsafe_allow_html=True)
 
-            if not using_official_api:
+            # Show balance if we have a private key (can query on-chain)
+            if has_private_key:
                 st.markdown(f"""
                 <div style='display: flex; gap: 8px; margin-bottom: 12px;'>
                     <div style='flex: 1; background: #111916; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #1a3025;'>
