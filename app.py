@@ -38,7 +38,7 @@ from eth_account import Account
 
 # py-clob-client imports
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OrderArgs
+from py_clob_client.clob_types import OrderArgs, ApiCreds
 
 # Monkey-patch httpx to add browser headers (bypass Cloudflare)
 import httpx
@@ -1248,14 +1248,20 @@ def get_clob_client() -> Optional[ClobClient]:
         api_passphrase = os.environ.get("POLYMARKET_API_PASSPHRASE")
 
         if api_key and api_secret and api_passphrase:
-            # Use official API credentials (no Cloudflare issues)
+            # Use official API credentials
+            # Note: ClobClient constructor ignores creds param, must use set_api_creds()
+            pk = os.environ.get("POLYMARKET_PRIVATE_KEY", "")
             client = ClobClient(
                 host=CLOB_HOST,
-                key=api_key,
-                secret=api_secret,
-                passphrase=api_passphrase,
+                key=pk,
                 chain_id=CHAIN_ID
             )
+            creds = ApiCreds(
+                api_key=api_key,
+                api_secret=api_secret,
+                api_passphrase=api_passphrase
+            )
+            client.set_api_creds(creds)
             st.session_state.client = client
             st.session_state.api_cred_status = "official API"
             return client
