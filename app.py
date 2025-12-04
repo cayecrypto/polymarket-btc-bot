@@ -40,7 +40,6 @@ gabagool style - Dec 2025 - 4X PRINTING SEASON with the bros
 ================================================================================
 """
 
-import re
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any, Tuple, List
@@ -51,7 +50,6 @@ import pytz
 import pandas as pd
 from web3 import Web3
 from eth_account import Account
-import dateutil.parser
 
 # py-clob-client imports
 from py_clob_client.client import ClobClient
@@ -116,7 +114,7 @@ COIN_MAP = {
 # Trading safety parameters
 MAX_IMBALANCE = 500          # Max allowed share imbalance
 WARN_IMBALANCE = 400         # Threshold to disable heavier side
-NO_TRADE_SECONDS = 90        # No trades in last 90 seconds
+NO_TRADE_SECONDS = 90        # No trades in last 90 seconds (based on end_time if available)
 PRICE_SLIPPAGE = 0.006       # Cross spread by 0.6 cents
 BUY_AMOUNTS = [10, 25, 50, 100]  # USD amounts for buy buttons
 REFRESH_INTERVAL = 8         # Seconds between auto-refresh
@@ -171,7 +169,7 @@ if 'state' not in st.session_state:
         "trade_log": []     # global trade log
     }
 
-# Ensure markets key exists (migration safety)
+# Ensure all keys exist (migration safety)
 if "markets" not in st.session_state.state:
     st.session_state.state["markets"] = {}
 
@@ -454,7 +452,7 @@ def get_clob_client() -> Optional[ClobClient]:
 
 
 # =============================================================================
-# MARKET DETECTION - BULLETPROOF FOR LIVE DATA
+# MARKET DETECTION - BULLETPROOF (NO TIME PARSING)
 # =============================================================================
 
 def detect_coin_from_question(question: str) -> Optional[str]:
@@ -464,81 +462,12 @@ def detect_coin_from_question(question: str) -> Optional[str]:
     """
     q_lower = question.lower()
 
-    # Must be an "up or down" market
-    if "up or down" not in q_lower:
-        return None
-
     # Check for each supported coin keyword
     for keyword in COIN_KEYWORDS:
         if keyword in q_lower:
             return COIN_MAP.get(keyword)
 
     return None
-
-
-def parse_market_time_flexible(question: str) -> Optional[Tuple[datetime, datetime]]:
-    """
-    Bulletproof time parsing for market questions.
-    Uses dateutil.parser for maximum flexibility.
-    """
-    try:
-        # Extract time string after the dash
-        if " - " not in question:
-            return None
-
-        time_str = question.split(" - ", 1)[1]
-
-        # Split into start and end times
-        # Handle various separators: "-", "–", "to"
-        time_str = time_str.replace("–", "-")  # en-dash to hyphen
-
-        # Find the time range pattern
-        # Could be "3:45PM-4:00PM ET" or "3:45 PM - 4:00 PM ET"
-        parts = time_str.split("-")
-        if len(parts) < 2:
-            return None
-
-        start_str = parts[0].strip()
-        end_str = parts[1].strip()
-
-        # Remove "ET" from end if present
-        end_str = end_str.replace(" ET", "").replace("ET", "").strip()
-
-        # Get today's date in ET
-        now = datetime.now(ET)
-        today_str = now.strftime("%B %d, %Y")  # "December 4, 2025"
-
-        # Parse times with today's date
-        try:
-            start_dt = dateutil.parser.parse(f"{today_str} {start_str}")
-            end_dt = dateutil.parser.parse(f"{today_str} {end_str}")
-        except:
-            # Try parsing from question itself if date is included
-            # "December 4, 3:45PM-4:00PM ET"
-            try:
-                # Extract date from before the time
-                date_match = re.search(r"(\w+ \d{1,2})", question)
-                if date_match:
-                    date_str = date_match.group(1) + f", {now.year}"
-                    start_dt = dateutil.parser.parse(f"{date_str} {start_str}")
-                    end_dt = dateutil.parser.parse(f"{date_str} {end_str}")
-                else:
-                    return None
-            except:
-                return None
-
-        # Localize to ET
-        start_dt = ET.localize(start_dt.replace(tzinfo=None))
-        end_dt = ET.localize(end_dt.replace(tzinfo=None))
-
-        # Handle midnight crossing
-        if end_dt < start_dt:
-            end_dt = end_dt.replace(day=end_dt.day + 1)
-
-        return start_dt, end_dt
-
-    except Exception:
-        return None
 
 
 def fetch_active_markets() -> List[Dict]:
@@ -565,11 +494,10 @@ def fetch_active_markets() -> List[Dict]:
 
 def find_all_active_updown_markets() -> List[Dict]:
     """
-    Find all currently active Up/Down 15-minute markets for supported coins.
-    Bulletproof detection for live markets.
+    Find all currently active Up/Down markets for supported coins.
+    BULLETPROOF: No time parsing - just trust Polymarket's active flag.
     """
     markets_data = fetch_active_markets()
-    now = datetime.now(ET)
     active_markets = []
 
     for m in markets_data:
@@ -585,23 +513,13 @@ def find_all_active_updown_markets() -> List[Dict]:
             if "up or down" not in q_lower:
                 continue
 
+            # Check for any supported coin
             if not any(coin in q_lower for coin in COIN_KEYWORDS):
                 continue
 
-            # Detect coin
+            # Detect coin symbol
             coin = detect_coin_from_question(question)
             if coin is None:
-                continue
-
-            # Parse time window
-            times = parse_market_time_flexible(question)
-            if times is None:
-                continue
-
-            start_time, end_time = times
-
-            # Check if current time is within market window
-            if not (start_time <= now <= end_time):
                 continue
 
             # Extract token IDs for Up and Down outcomes
@@ -617,12 +535,23 @@ def find_all_active_updown_markets() -> List[Dict]:
                     down_token = token
 
             if up_token and down_token:
+                # Get end_time from API if available (for countdown), otherwise None
+                end_time_str = m.get("end_date_iso") or m.get("end_time")
+                end_time = None
+                if end_time_str:
+                    try:
+                        from dateutil import parser as dateutil_parser
+                        end_time = dateutil_parser.parse(end_time_str)
+                        if end_time.tzinfo is None:
+                            end_time = ET.localize(end_time)
+                    except:
+                        end_time = None
+
                 active_markets.append({
                     "condition_id": m.get("condition_id"),
                     "coin": coin,
                     "question": question,
-                    "start_time": start_time,
-                    "end_time": end_time,
+                    "end_time": end_time,  # May be None
                     "up_token_id": up_token["token_id"],
                     "down_token_id": down_token["token_id"],
                     "up_price": float(up_token.get("price", 0.5)),
@@ -638,15 +567,24 @@ def find_all_active_updown_markets() -> List[Dict]:
     return active_markets
 
 
-def get_seconds_remaining(end_time: datetime) -> int:
-    """Calculate seconds remaining until market ends."""
-    now = datetime.now(ET)
-    delta = end_time - now
-    return max(0, int(delta.total_seconds()))
+def get_seconds_remaining(end_time) -> int:
+    """Calculate seconds remaining until market ends. Returns 999 if unknown."""
+    if end_time is None:
+        return 999  # Unknown, assume plenty of time
+    try:
+        now = datetime.now(ET)
+        if end_time.tzinfo is None:
+            end_time = ET.localize(end_time)
+        delta = end_time - now
+        return max(0, int(delta.total_seconds()))
+    except:
+        return 999
 
 
 def format_countdown(seconds: int) -> str:
     """Format seconds as MM:SS countdown string."""
+    if seconds >= 999:
+        return "LIVE"
     minutes, secs = divmod(seconds, 60)
     return f"{minutes:02d}:{secs:02d}"
 
@@ -760,8 +698,8 @@ def check_safety(mstate: Dict, side: str, seconds_remaining: int) -> Tuple[bool,
     Check if a trade is allowed under safety rules.
     Returns: (is_allowed, reason_if_blocked)
     """
-    # Rule 1: No trading in final 90 seconds
-    if seconds_remaining < NO_TRADE_SECONDS:
+    # Rule 1: No trading in final 90 seconds (only if we know the time)
+    if seconds_remaining < NO_TRADE_SECONDS and seconds_remaining != 999:
         return False, f"Trading disabled - {seconds_remaining}s remaining (min: {NO_TRADE_SECONDS}s)"
 
     # Rule 2: Check imbalance limits
@@ -789,8 +727,8 @@ def check_safety(mstate: Dict, side: str, seconds_remaining: int) -> Tuple[bool,
 
 def should_disable_button(mstate: Dict, side: str, seconds_remaining: int) -> bool:
     """Determine if a buy button should be disabled."""
-    # Disable if in final window
-    if seconds_remaining < NO_TRADE_SECONDS:
+    # Disable if in final window (only if we know the time)
+    if seconds_remaining < NO_TRADE_SECONDS and seconds_remaining != 999:
         return True
 
     # Disable heavier side at warning threshold
@@ -1052,7 +990,7 @@ def render_market_tab(market: Dict, client: ClobClient):
     coin = market["coin"]
     mstate = get_market_state(condition_id, coin)
 
-    seconds_remaining = get_seconds_remaining(market["end_time"])
+    seconds_remaining = get_seconds_remaining(market.get("end_time"))
 
     # Countdown + Question header
     col1, col2 = st.columns([3, 1])
@@ -1061,13 +999,19 @@ def render_market_tab(market: Dict, client: ClobClient):
         st.markdown(f"**{market['question']}**")
 
     with col2:
-        countdown_color = "#ff5252" if seconds_remaining < NO_TRADE_SECONDS else "#00c853"
-        st.markdown(
-            f"<div style='font-size: 2.5em; font-weight: bold; color: {countdown_color}; text-align: center;'>{format_countdown(seconds_remaining)}</div>",
-            unsafe_allow_html=True
-        )
-        if seconds_remaining < NO_TRADE_SECONDS:
-            st.error("⏰ TRADING DISABLED")
+        if seconds_remaining < 999:
+            countdown_color = "#ff5252" if seconds_remaining < NO_TRADE_SECONDS else "#00c853"
+            st.markdown(
+                f"<div style='font-size: 2.5em; font-weight: bold; color: {countdown_color}; text-align: center;'>{format_countdown(seconds_remaining)}</div>",
+                unsafe_allow_html=True
+            )
+            if seconds_remaining < NO_TRADE_SECONDS:
+                st.error("⏰ TRADING DISABLED")
+        else:
+            st.markdown(
+                "<div style='font-size: 2em; font-weight: bold; color: #00c853; text-align: center;'>🟢 LIVE</div>",
+                unsafe_allow_html=True
+            )
 
     st.divider()
 
@@ -1282,7 +1226,7 @@ def main():
     st.divider()
 
     # =========================================================================
-    # MARKET DETECTION
+    # MARKET DETECTION - BULLETPROOF
     # =========================================================================
     active_markets = find_all_active_updown_markets()
 
@@ -1292,11 +1236,11 @@ def main():
 
     if not active_markets:
         st.markdown("""
-        <div style='background-color: #1a1a2e; padding: 40px; border-radius: 16px; text-align: center; margin: 40px 0;'>
-            <h2 style='color: #ffc107;'>⏳ Waiting for next 15-min windows...</h2>
-            <p style='color: #888; font-size: 1.2em;'>Markets run 24/7 with occasional short gaps during oracle finalization.</p>
-            <p style='color: #888;'>BTC, ETH, SOL, XRP markets refresh every 15 minutes.</p>
-            <p style='color: #666; font-size: 0.9em;'>Next market should start within a few minutes.</p>
+        <div style='background-color: #1a1a2e; padding: 50px; border-radius: 20px; text-align: center; margin: 40px 0;'>
+            <h2 style='color: #ffc107; margin-bottom: 20px;'>🔍 Scanning for 15-min markets...</h2>
+            <p style='color: #888; font-size: 1.3em;'>Markets run 24/7 — next window starting any second!</p>
+            <p style='color: #666; font-size: 1em; margin-top: 15px;'>BTC • ETH • SOL • XRP refresh every 15 minutes</p>
+            <p style='color: #555; font-size: 0.9em; margin-top: 10px;'>Short gaps between windows are normal during oracle finalization.</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1304,8 +1248,8 @@ def main():
         now = datetime.now(ET)
         st.metric("Current Time (ET)", now.strftime("%I:%M:%S %p"))
 
-        # Auto-refresh
-        time.sleep(5)
+        # Auto-refresh faster when waiting
+        time.sleep(3)
         st.rerun()
         return
 
