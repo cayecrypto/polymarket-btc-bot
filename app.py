@@ -1921,57 +1921,37 @@ def main():
 
     # If wallet not connected, show connect prompt in main area
     if not wallet_connected:
-        # JavaScript to open sidebar when button is clicked
+        # Force sidebar to be expanded using Streamlit's native approach
         st.markdown("""
         <style>
-        /* Style the connect button */
-        .connect-btn {
-            background: linear-gradient(135deg, #00ff6a 0%, #00cc55 100%);
-            color: #0a0f0a;
-            font-family: 'JetBrains Mono', monospace;
-            font-weight: 700;
-            font-size: 16px;
-            padding: 16px 48px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            display: inline-block;
-            text-decoration: none;
-            margin-top: 20px;
-            box-shadow: 0 4px 20px rgba(0, 255, 106, 0.3);
-            transition: all 0.2s ease;
+        /* Force sidebar to be visible/expanded on connect screen */
+        [data-testid="stSidebar"] {
+            display: block !important;
+            width: 300px !important;
+            min-width: 300px !important;
+            transform: translateX(0) !important;
         }
-        .connect-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 30px rgba(0, 255, 106, 0.4);
+        [data-testid="stSidebar"] > div:first-child {
+            width: 300px !important;
+        }
+        /* Hide the collapse button since we want sidebar always open here */
+        [data-testid="collapsedControl"] {
+            display: none !important;
         }
         </style>
+        """, unsafe_allow_html=True)
 
-        <div style='text-align: center; padding: 120px 20px;'>
+        # Center content
+        st.markdown("""
+        <div style='text-align: center; padding: 100px 20px;'>
             <h1 style='color: #00ff6a; font-family: JetBrains Mono; font-weight: 700; font-size: 32px; margin-bottom: 10px;'>
                 POLYMARKET TERMINAL
             </h1>
-            <p style='color: #7a9a8a; font-family: JetBrains Mono; font-size: 14px; margin-bottom: 40px;'>
+            <p style='color: #7a9a8a; font-family: JetBrains Mono; font-size: 14px; margin-bottom: 20px;'>
                 15-Minute Combo Trading System
             </p>
-
-            <button class="connect-btn" onclick="
-                // Try multiple selectors to find and click the sidebar toggle
-                var btn = document.querySelector('[data-testid=\\'collapsedControl\\']') ||
-                          document.querySelector('button[kind=\\'header\\']') ||
-                          document.querySelector('[data-testid=\\'stSidebarCollapseButton\\']');
-                if (btn) {
-                    btn.click();
-                } else {
-                    // If no toggle found, sidebar might already be open - alert user
-                    alert('Sidebar should be visible on the left. Enter your private key there.');
-                }
-            ">
-                CONNECT WALLET →
-            </button>
-
-            <p style='color: #5a6a5a; font-family: JetBrains Mono; font-size: 11px; margin-top: 40px;'>
-                Click the button to open the sidebar and enter your private key
+            <p style='color: #5a8a6a; font-family: JetBrains Mono; font-size: 13px;'>
+                ← Enter your private key in the sidebar to connect
             </p>
         </div>
         """, unsafe_allow_html=True)
