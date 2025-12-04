@@ -1227,6 +1227,20 @@ def get_clob_client() -> Optional[ClobClient]:
             key=st.session_state.private_key,
             chain_id=CHAIN_ID
         )
+
+        # Add browser-like headers to bypass Cloudflare bot detection
+        browser_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://polymarket.com",
+            "Referer": "https://polymarket.com/",
+        }
+        if hasattr(client, 'session'):
+            client.session.headers.update(browser_headers)
+        if hasattr(client, 'client') and hasattr(client.client, 'session'):
+            client.client.session.headers.update(browser_headers)
+
         # Try derive_api_key first (for already-registered wallets)
         # Falls back to create_or_derive if needed
         cred_status = "unknown"
