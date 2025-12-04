@@ -1611,7 +1611,7 @@ def render_sidebar():
                 else:
                     st.error("64 hex chars required")
 
-            st.stop()
+            return False  # Signal wallet not connected
 
         try:
             wallet_addr = get_wallet_address()
@@ -1637,7 +1637,7 @@ def render_sidebar():
 
         except Exception as e:
             st.error(f"Error: {e}")
-            st.stop()
+            return False  # Signal error occurred
 
         # Backup download
         backup_data = export_state_json()
@@ -1666,6 +1666,8 @@ def render_sidebar():
             st.session_state.private_key = ""
             st.session_state.client = None
             st.rerun()
+
+    return True  # Wallet connected successfully
 
 
 # =============================================================================
@@ -1898,7 +1900,24 @@ def main():
     """Main god-mode terminal."""
 
     # Sidebar wallet
-    render_sidebar()
+    wallet_connected = render_sidebar()
+
+    # If wallet not connected, show connect prompt in main area
+    if not wallet_connected:
+        st.markdown("""
+        <div style='text-align: center; padding: 150px 20px;'>
+            <h1 style='color: #00ff6a; font-family: JetBrains Mono; font-weight: 700; font-size: 28px;'>
+                POLYMARKET TERMINAL
+            </h1>
+            <p style='color: #7a9a8a; font-family: JetBrains Mono; font-size: 14px; margin-top: 20px;'>
+                Connect your wallet in the sidebar to start trading
+            </p>
+            <p style='color: #5a6a5a; font-family: JetBrains Mono; font-size: 11px; margin-top: 30px;'>
+                ← Open sidebar and enter your private key
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        return  # Exit main() early - don't try to render dashboard
 
     state = st.session_state.state
 
