@@ -2110,6 +2110,17 @@ def render_sidebar():
         </div>
         """, unsafe_allow_html=True)
 
+        # Check if official API credentials are set - auto-connect if so
+        api_key = os.environ.get("POLYMARKET_API_KEY")
+        api_secret = os.environ.get("POLYMARKET_API_SECRET")
+        api_passphrase = os.environ.get("POLYMARKET_API_PASSPHRASE")
+
+        if api_key and api_secret and api_passphrase and not st.session_state.wallet_connected:
+            # Auto-connect with official API
+            st.session_state.wallet_connected = True
+            st.session_state.rpc_url = "https://polygon-rpc.com"
+            st.session_state.api_cred_status = "official API"
+
         if not st.session_state.wallet_connected:
             private_key_input = st.text_input(
                 "Private Key",
@@ -2142,30 +2153,45 @@ def render_sidebar():
             return False  # Signal wallet not connected
 
         try:
-            wallet_addr = get_wallet_address()
-            usdc_bal = get_usdc_balance() or 0
-            matic_bal = get_matic_balance() or 0
+            # Check if using official API (no wallet address available)
+            api_key = os.environ.get("POLYMARKET_API_KEY")
+            using_official_api = bool(api_key and os.environ.get("POLYMARKET_API_SECRET"))
+
+            if using_official_api:
+                wallet_addr = "API Mode"
+                usdc_bal = 0  # Can't query balance without wallet
+                matic_bal = 0
+            else:
+                wallet_addr = get_wallet_address()
+                usdc_bal = get_usdc_balance() or 0
+                matic_bal = get_matic_balance() or 0
+
+            display_addr = "Official API" if using_official_api else f"{wallet_addr[:6]}...{wallet_addr[-4:]}"
 
             st.markdown(f"""
             <div style='background: #111916; padding: 12px; border-radius: 6px; border: 1px solid #1a3025; margin-bottom: 12px;'>
                 <div style='color: #00ff6a; font-size: 10px; letter-spacing: 1px;'>CONNECTED</div>
-                <div style='font-family: JetBrains Mono; font-size: 11px; color: #7a9a8a;'>{wallet_addr[:6]}...{wallet_addr[-4:]}</div>
-            </div>
-            <div style='display: flex; gap: 8px; margin-bottom: 12px;'>
-                <div style='flex: 1; background: #111916; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #1a3025;'>
-                    <div style='color: #00ff6a; font-family: JetBrains Mono; font-weight: 700;'>${usdc_bal:.2f}</div>
-                    <div style='color: #5a8a6a; font-size: 9px;'>USDC</div>
-                </div>
-                <div style='flex: 1; background: #111916; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #1a3025;'>
-                    <div style='color: #e0e0e0; font-family: JetBrains Mono; font-weight: 700;'>{matic_bal:.3f}</div>
-                    <div style='color: #5a8a6a; font-size: 9px;'>MATIC</div>
-                </div>
+                <div style='font-family: JetBrains Mono; font-size: 11px; color: #7a9a8a;'>{display_addr}</div>
             </div>
             """, unsafe_allow_html=True)
 
+            if not using_official_api:
+                st.markdown(f"""
+                <div style='display: flex; gap: 8px; margin-bottom: 12px;'>
+                    <div style='flex: 1; background: #111916; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #1a3025;'>
+                        <div style='color: #00ff6a; font-family: JetBrains Mono; font-weight: 700;'>${usdc_bal:.2f}</div>
+                        <div style='color: #5a8a6a; font-size: 9px;'>USDC</div>
+                    </div>
+                    <div style='flex: 1; background: #111916; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #1a3025;'>
+                        <div style='color: #e0e0e0; font-family: JetBrains Mono; font-weight: 700;'>{matic_bal:.3f}</div>
+                        <div style='color: #5a8a6a; font-size: 9px;'>MATIC</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
             # Show API credential status
             api_status = st.session_state.get("api_cred_status", "not initialized")
-            status_color = "#00ff6a" if api_status in ["derived", "created"] else "#ff6b6b"
+            status_color = "#00ff6a" if api_status in ["derived", "created", "official API"] else "#ff6b6b"
             st.markdown(f"""
             <div style='background: #111916; padding: 8px; border-radius: 6px; border: 1px solid #1a3025; margin-bottom: 12px;'>
                 <div style='color: #5a8a6a; font-size: 9px;'>API CREDS</div>
