@@ -1,10 +1,10 @@
 """
 ================================================================================
-POLYMARKET 15-MIN COMBO PRINTER — PROFESSIONAL TRADING DASHBOARD
+POLYMARKET 15-MIN COMBO PRINTER — GOD MODE TERMINAL
 ================================================================================
 
-A professional-grade Streamlit trading dashboard for Polymarket's Up/Down
-15-minute prediction markets using the "gabagool-style" combo/hedge strategy.
+A single-screen, zero-scroll hedge fund terminal for Polymarket's Up/Down
+15-minute prediction markets. Maximum density, maximum alpha.
 
 SUPPORTED MARKETS:
     - Bitcoin (BTC)
@@ -12,30 +12,9 @@ SUPPORTED MARKETS:
     - Solana (SOL)
     - XRP
 
-CLOUD DEPLOYMENT (Streamlit Community Cloud):
-    1. Create new GitHub repo
-    2. Upload this app.py + requirements.txt
-    3. Deploy at https://share.streamlit.io
-    4. Share the link with the squad
-
-Each browser tab = independent wallet session
-Private keys stay in browser memory only (never stored on server)
-
-REQUIREMENTS.TXT:
-    streamlit>=1.28.0
-    py-clob-client>=0.17.0
-    web3>=6.11.0
-    pytz>=2023.3
-    requests>=2.31.0
-    python-dateutil>=2.8.0
-    pandas>=2.0.0
-    eth-account>=0.10.0
-    plotly>=5.18.0
-
 STRATEGY:
     Buy both UP and DOWN tokens to lock in guaranteed profit when pair cost < $1.
     Each pair pays out exactly $1 at resolution regardless of outcome.
-    Profit = $1 * locked_shares - cost_of_locked_shares
 
 gabagool style - Dec 2025 - 4X PRINTING SEASON with the bros
 ================================================================================
@@ -53,7 +32,6 @@ import requests
 import pytz
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
 from web3 import Web3
 from eth_account import Account
 
@@ -62,552 +40,533 @@ from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderArgs
 
 # =============================================================================
-# PAGE CONFIGURATION
+# PAGE CONFIGURATION - FULLSCREEN GOD MODE
 # =============================================================================
 
 st.set_page_config(
-    page_title="Polymarket 15-Min Combo Printer",
+    page_title="POLYMARKET TERMINAL",
     page_icon="💎",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # =============================================================================
-# DARK THEME CSS - PROFESSIONAL TRADING DASHBOARD
+# DARK TERMINAL CSS - HEDGE FUND AESTHETIC
 # =============================================================================
 
-DARK_THEME_CSS = """
+TERMINAL_CSS = """
 <style>
-    /* Global Dark Theme */
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+    /* GLOBAL RESET */
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
     .stApp {
-        background-color: #0e1117;
-        color: #ffffff;
+        background: linear-gradient(180deg, #0a0f0d 0%, #0d1210 50%, #0a0e0c 100%);
+        color: #e0e0e0;
+        font-family: 'Inter', -apple-system, sans-serif;
+        overflow: hidden !important;
     }
 
-    /* Force all text to be white/light */
-    .stApp, .stApp p, .stApp span, .stApp div, .stApp label,
-    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
-    .stMarkdown, .stMarkdown p, .stMarkdown span,
-    [data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] p {
-        color: #ffffff !important;
+    /* HIDE ALL STREAMLIT CHROME */
+    #MainMenu, footer, header {visibility: hidden !important; height: 0 !important;}
+    .stDeployButton, [data-testid="stToolbar"] {display: none !important;}
+    .block-container {padding: 0 !important; max-width: 100% !important;}
+    [data-testid="stHeader"] {display: none !important;}
+
+    /* REMOVE ALL SCROLLING */
+    .main, .main > div, [data-testid="stAppViewContainer"] {
+        overflow: hidden !important;
+        height: 100vh !important;
     }
 
-    /* Caption and secondary text */
-    .stCaption, small, .stApp small {
-        color: #888888 !important;
-    }
-
-    /* Hide Streamlit branding - but keep essential UI */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    /* Keep header visible for sidebar toggle */
-    header[data-testid="stHeader"] {
-        background-color: #0e1117 !important;
-    }
-
-    /* Main container */
-    .main .block-container {
-        padding-top: 1rem;
-        padding-bottom: 1rem;
-        max-width: 100%;
-    }
-
-    /* Custom card styling */
-    .pro-card {
-        background: linear-gradient(145deg, #161a22, #1a1f2a);
-        border: 1px solid #2d333b;
-        border-radius: 12px;
-        padding: 20px;
-        margin: 10px 0;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-    }
-
-    .pro-card-header {
-        background: linear-gradient(90deg, #161a22, #1e242e);
-        border: 1px solid #2d333b;
-        border-radius: 12px 12px 0 0;
-        padding: 15px 20px;
-        margin: -20px -20px 15px -20px;
-        border-bottom: 1px solid #2d333b;
-    }
-
-    /* Header bar */
-    .header-bar {
-        background: linear-gradient(180deg, #161a22, #0e1117);
-        border-bottom: 2px solid #00c853;
-        padding: 15px 30px;
-        margin: -1rem -1rem 1rem -1rem;
+    /* TOP STATS BAR - THIN DARK GREEN */
+    .top-bar {
+        background: linear-gradient(90deg, #0d2818 0%, #0f3020 50%, #0d2818 100%);
+        border-bottom: 1px solid #1a5c35;
+        padding: 8px 24px;
         display: flex;
         justify-content: space-between;
         align-items: center;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 1000;
+        height: 48px;
+        box-shadow: 0 2px 20px rgba(0, 80, 40, 0.3);
     }
 
-    .header-title {
-        color: #00c853;
-        font-size: 1.8em;
-        font-weight: 700;
-        letter-spacing: 2px;
-        text-shadow: 0 0 20px rgba(0,200,83,0.3);
-    }
-
-    .header-stats {
+    .top-bar-left {
         display: flex;
-        gap: 40px;
+        align-items: center;
+        gap: 32px;
     }
 
-    .header-stat {
-        text-align: center;
+    .top-bar-title {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 800;
+        font-size: 14px;
+        letter-spacing: 2px;
+        color: #00ff6a;
+        text-shadow: 0 0 20px rgba(0, 255, 106, 0.5);
     }
 
-    .header-stat-value {
-        font-size: 1.5em;
-        font-weight: bold;
-        color: #00c853;
+    .top-bar-stat {
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
 
-    .header-stat-label {
-        font-size: 0.75em;
-        color: #888;
+    .top-bar-stat-label {
+        font-size: 10px;
+        color: #5a8a6a;
         text-transform: uppercase;
         letter-spacing: 1px;
+        font-weight: 600;
     }
 
-    /* Market cards */
-    .market-card {
-        background: linear-gradient(145deg, #161a22, #1a1f2a);
-        border: 1px solid #2d333b;
-        border-radius: 16px;
-        padding: 20px;
-        text-align: center;
-        transition: all 0.3s ease;
+    .top-bar-stat-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 14px;
+        font-weight: 700;
+        color: #00ff6a;
+    }
+
+    .top-bar-stat-value.positive {
+        color: #00ff6a;
+        text-shadow: 0 0 10px rgba(0, 255, 106, 0.4);
+    }
+
+    .top-bar-stat-value.neutral {
+        color: #e0e0e0;
+    }
+
+    /* MAIN CONTAINER */
+    .main-container {
+        display: flex;
+        padding-top: 56px;
+        height: calc(100vh - 40px);
+        gap: 16px;
+        padding: 56px 16px 8px 16px;
+    }
+
+    /* LEFT COLUMN - 33% - MARKET CARDS */
+    .left-column {
+        width: 33%;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
         height: 100%;
     }
 
+    /* MARKET CARD - COMPACT */
+    .market-card {
+        background: linear-gradient(145deg, #111916 0%, #0f1512 100%);
+        border: 1px solid #1a3025;
+        border-radius: 8px;
+        padding: 12px 16px;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        transition: all 0.2s ease;
+    }
+
     .market-card:hover {
-        border-color: #00c853;
-        box-shadow: 0 0 30px rgba(0,200,83,0.2);
+        border-color: #2a5035;
+        box-shadow: 0 0 30px rgba(0, 255, 106, 0.1);
     }
 
-    .market-card-active {
-        border-left: 4px solid #00c853;
+    .market-card.edge {
+        border-color: #00ff6a;
+        box-shadow: 0 0 20px rgba(0, 255, 106, 0.2);
     }
 
-    .market-card-waiting {
-        border-left: 4px solid #ffc107;
-        opacity: 0.7;
+    .market-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+
+    .coin-badge {
+        display: flex;
+        align-items: center;
+        gap: 10px;
     }
 
     .coin-symbol {
-        font-size: 2.5em;
+        font-family: 'JetBrains Mono', monospace;
         font-weight: 800;
-        margin-bottom: 5px;
+        font-size: 18px;
     }
 
     .coin-btc { color: #f7931a; }
     .coin-eth { color: #627eea; }
     .coin-sol { color: #00ffa3; }
-    .coin-xrp { color: #23292f; background: linear-gradient(135deg, #fff, #888); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .coin-xrp { color: #c0c0c0; }
 
-    /* Gauge styling */
-    .gauge-container {
-        position: relative;
-        width: 120px;
-        height: 120px;
-        margin: 10px auto;
+    .coin-price {
+        font-size: 12px;
+        color: #7a9a8a;
     }
 
-    /* Profit/Loss colors */
-    .profit-positive {
-        color: #00c853 !important;
-        text-shadow: 0 0 10px rgba(0,200,83,0.5);
+    .coin-change {
+        font-size: 11px;
+        font-weight: 600;
     }
 
-    .profit-negative {
-        color: #ff5252 !important;
-        text-shadow: 0 0 10px rgba(255,82,82,0.5);
+    .coin-change.up { color: #00ff6a; }
+    .coin-change.down { color: #ff4d4d; }
+
+    .market-locked {
+        text-align: right;
     }
 
-    /* Big number display */
-    .big-number {
-        font-size: 3em;
+    .locked-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 700;
+        font-size: 14px;
+        color: #00ff6a;
+    }
+
+    .locked-label {
+        font-size: 9px;
+        color: #5a8a6a;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    /* PAIR COST ROW */
+    .pair-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: 8px 0;
+        padding: 8px 12px;
+        background: rgba(0, 50, 30, 0.3);
+        border-radius: 6px;
+    }
+
+    .pair-label {
+        font-size: 11px;
+        color: #5a8a6a;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .pair-cost {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 20px;
         font-weight: 800;
-        line-height: 1;
     }
 
-    .big-number-label {
-        font-size: 0.8em;
-        color: #888;
+    .pair-cost.good { color: #00ff6a; text-shadow: 0 0 15px rgba(0, 255, 106, 0.5); }
+    .pair-cost.marginal { color: #ffd93d; }
+    .pair-cost.bad { color: #ff4d4d; }
+
+    /* PRICE ROW */
+    .price-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 12px;
+        color: #7a9a8a;
+        margin-bottom: 4px;
+    }
+
+    .price-up { color: #00cc55; }
+    .price-down { color: #ff6b6b; }
+    .imbal { color: #ffd93d; }
+
+    /* BUY BUTTONS */
+    .btn-row {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+    }
+
+    .buy-btn {
+        flex: 1;
+        padding: 6px 4px;
+        background: linear-gradient(145deg, #0f2018, #142820);
+        border: 1px solid #1a4030;
+        border-radius: 4px;
+        color: #00ff6a;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+    .buy-btn:hover {
+        background: linear-gradient(145deg, #1a3528, #204030);
+        border-color: #00ff6a;
+        box-shadow: 0 0 15px rgba(0, 255, 106, 0.2);
+    }
+
+    .buy-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+
+    /* RIGHT COLUMN - 67% */
+    .right-column {
+        width: 67%;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        height: 100%;
+    }
+
+    /* EQUITY CHART */
+    .equity-panel {
+        background: linear-gradient(145deg, #111916 0%, #0f1512 100%);
+        border: 1px solid #1a3025;
+        border-radius: 8px;
+        padding: 12px 16px;
+        flex: 1.2;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+
+    .panel-title {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        font-weight: 700;
+        color: #5a8a6a;
         text-transform: uppercase;
         letter-spacing: 2px;
-        margin-top: 5px;
     }
 
-    /* Table styling */
-    .pro-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-family: 'SF Mono', 'Monaco', monospace;
-    }
-
-    .pro-table th {
-        background: #161a22;
-        color: #888;
-        padding: 12px;
-        text-align: left;
-        font-size: 0.75em;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        border-bottom: 2px solid #2d333b;
-    }
-
-    .pro-table td {
-        padding: 12px;
-        border-bottom: 1px solid #2d333b;
-        color: #fff;
-    }
-
-    .pro-table tr:hover {
-        background: #1a1f2a;
-    }
-
-    /* Button styling */
-    .stButton > button {
-        background: linear-gradient(145deg, #1e242e, #161a22);
-        border: 1px solid #2d333b;
-        color: #fff;
-        font-weight: 600;
-        transition: all 0.3s ease;
-    }
-
-    .stButton > button:hover {
-        border-color: #00c853;
-        box-shadow: 0 0 20px rgba(0,200,83,0.3);
-    }
-
-    /* Buy buttons */
-    .buy-up-btn {
-        background: linear-gradient(145deg, #1b5e20, #2e7d32) !important;
-        border-color: #4caf50 !important;
-    }
-
-    .buy-down-btn {
-        background: linear-gradient(145deg, #b71c1c, #c62828) !important;
-        border-color: #f44336 !important;
-    }
-
-    /* Tab styling */
-    .stTabs [data-baseweb="tab-list"] {
-        background: #161a22;
-        border-radius: 8px;
-        padding: 5px;
-        gap: 5px;
-    }
-
-    .stTabs [data-baseweb="tab"] {
-        background: transparent;
-        color: #888;
-        border-radius: 6px;
-        padding: 10px 20px;
-        font-weight: 600;
-    }
-
-    .stTabs [aria-selected="true"] {
-        background: linear-gradient(145deg, #1e242e, #252b38);
-        color: #00c853;
-        border-bottom: 2px solid #00c853;
-    }
-
-    /* Metric cards */
-    .stMetric {
-        background: linear-gradient(145deg, #161a22, #1a1f2a);
-        border: 1px solid #2d333b;
-        border-radius: 10px;
-        padding: 15px;
-    }
-
-    .stMetric label {
-        color: #888 !important;
-    }
-
-    .stMetric [data-testid="stMetricValue"] {
-        color: #fff !important;
-    }
-
-    /* Sidebar styling */
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #161a22, #0e1117);
-        border-right: 1px solid #2d333b;
-    }
-
-    [data-testid="stSidebar"] .stMarkdown {
-        color: #888;
-    }
-
-    /* Countdown timer */
-    .countdown {
-        font-size: 3em;
+    .panel-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 16px;
         font-weight: 800;
-        font-family: 'SF Mono', 'Monaco', monospace;
-        text-align: center;
-        padding: 10px;
+        color: #00ff6a;
+    }
+
+    /* OPPORTUNITIES LIST */
+    .opportunities-panel {
+        background: linear-gradient(145deg, #111916 0%, #0f1512 100%);
+        border: 1px solid #1a3025;
         border-radius: 8px;
+        padding: 12px 16px;
+        flex: 1;
+        overflow-y: auto;
     }
 
-    .countdown-live {
-        color: #00c853;
-        text-shadow: 0 0 30px rgba(0,200,83,0.5);
-        animation: pulse 2s infinite;
+    .opp-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 0;
+        border-bottom: 1px solid rgba(26, 48, 37, 0.5);
+        font-size: 12px;
     }
 
-    .countdown-warning {
-        color: #ffc107;
+    .opp-row:last-child {
+        border-bottom: none;
     }
 
-    .countdown-danger {
-        color: #ff5252;
-        animation: blink 1s infinite;
+    .opp-time {
+        font-family: 'JetBrains Mono', monospace;
+        color: #5a8a6a;
+        font-size: 11px;
     }
 
-    @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.7; }
-    }
-
-    @keyframes blink {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.3; }
-    }
-
-    /* Pair cost display */
-    .pair-cost-display {
-        font-size: 2.5em;
-        font-weight: 800;
-        text-align: center;
-        padding: 20px;
-        border-radius: 12px;
-        margin: 10px 0;
-    }
-
-    .pair-cost-good {
-        background: linear-gradient(145deg, #1b5e20, #2e7d32);
-        color: #69f0ae;
-        border: 2px solid #4caf50;
-    }
-
-    .pair-cost-marginal {
-        background: linear-gradient(145deg, #f57f17, #ff8f00);
-        color: #fff;
-        border: 2px solid #ffc107;
-    }
-
-    .pair-cost-bad {
-        background: linear-gradient(145deg, #b71c1c, #c62828);
-        color: #ff8a80;
-        border: 2px solid #f44336;
-    }
-
-    /* Stats grid */
-    .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 15px;
-        margin: 20px 0;
-    }
-
-    .stat-box {
-        background: linear-gradient(145deg, #161a22, #1a1f2a);
-        border: 1px solid #2d333b;
-        border-radius: 10px;
-        padding: 15px;
-        text-align: center;
-    }
-
-    .stat-value {
-        font-size: 1.8em;
+    .opp-coin {
         font-weight: 700;
-        color: #fff;
+        color: #e0e0e0;
     }
 
-    .stat-label {
-        font-size: 0.7em;
-        color: #888;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        margin-top: 5px;
-    }
-
-    /* Divider */
-    hr {
-        border: none;
-        border-top: 1px solid #2d333b;
-        margin: 20px 0;
-    }
-
-    /* Input fields */
-    .stTextInput input {
-        background: #161a22;
-        border: 1px solid #2d333b;
-        color: #fff;
-    }
-
-    /* Expander */
-    .streamlit-expanderHeader {
-        background: #161a22;
-        border: 1px solid #2d333b;
-        border-radius: 8px;
-    }
-
-    /* Toast/alerts */
-    .stAlert {
-        background: #161a22;
-        border: 1px solid #2d333b;
-    }
-
-    /* Progress bar */
-    .stProgress > div > div {
-        background: linear-gradient(90deg, #00c853, #69f0ae);
-    }
-
-    /* Selectbox and dropdown styling */
-    .stSelectbox > div > div {
-        background: #161a22;
-        border: 1px solid #2d333b;
-        color: #fff;
-    }
-
-    .stSelectbox label {
-        color: #888 !important;
-    }
-
-    /* Dataframe styling */
-    .stDataFrame {
-        background: #161a22;
-    }
-
-    .stDataFrame [data-testid="stDataFrameResizable"] {
-        background: #0e1117;
-    }
-
-    /* File uploader */
-    .stFileUploader {
-        background: #161a22;
-        border: 1px solid #2d333b;
-        border-radius: 8px;
-    }
-
-    .stFileUploader label {
-        color: #888 !important;
-    }
-
-    /* Warning/Info/Error boxes text */
-    .stAlert > div {
-        color: #fff !important;
-    }
-
-    /* Spinner text */
-    .stSpinner > div {
-        color: #fff !important;
-    }
-
-    /* Column headers in dataframe */
-    [data-testid="stDataFrame"] th {
-        background: #161a22 !important;
-        color: #888 !important;
-    }
-
-    [data-testid="stDataFrame"] td {
-        background: #0e1117 !important;
-        color: #fff !important;
-    }
-
-    /* Binance price ticker */
-    .binance-ticker {
-        display: inline-block;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 0.85em;
+    .opp-pair {
+        font-family: 'JetBrains Mono', monospace;
+        color: #00ff6a;
         font-weight: 600;
-        margin-left: 8px;
     }
 
-    .binance-up {
-        color: #00c853;
+    .opp-edge {
+        font-family: 'JetBrains Mono', monospace;
+        color: #ffd93d;
+        font-size: 11px;
     }
 
-    .binance-down {
-        color: #ff5252;
+    .opp-best {
+        background: rgba(0, 255, 106, 0.1);
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 9px;
+        color: #00ff6a;
+        font-weight: 700;
     }
 
-    /* Sidebar styling */
+    .missed-profit {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid #1a3025;
+        font-size: 11px;
+        color: #7a9a8a;
+    }
+
+    .missed-value {
+        color: #ffd93d;
+        font-weight: 700;
+    }
+
+    /* BOTTOM TICKER */
+    .bottom-ticker {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: linear-gradient(90deg, #0d1810 0%, #0f1f18 50%, #0d1810 100%);
+        border-top: 1px solid #1a3025;
+        padding: 6px 0;
+        overflow: hidden;
+        height: 32px;
+        z-index: 1000;
+    }
+
+    .ticker-content {
+        display: flex;
+        animation: scroll 30s linear infinite;
+        white-space: nowrap;
+    }
+
+    @keyframes scroll {
+        0% { transform: translateX(0); }
+        100% { transform: translateX(-50%); }
+    }
+
+    .ticker-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 24px;
+        font-size: 11px;
+        color: #7a9a8a;
+    }
+
+    .ticker-time {
+        font-family: 'JetBrains Mono', monospace;
+        color: #5a8a6a;
+    }
+
+    .ticker-coin {
+        font-weight: 700;
+        color: #e0e0e0;
+    }
+
+    .ticker-amount {
+        color: #00cc55;
+    }
+
+    .ticker-profit {
+        font-family: 'JetBrains Mono', monospace;
+        color: #00ff6a;
+        font-weight: 700;
+    }
+
+    /* SIDEBAR OVERRIDES */
     [data-testid="stSidebar"] {
-        background-color: #0e1117 !important;
-        border-right: 1px solid #2d333b !important;
+        background: linear-gradient(180deg, #0a0f0d 0%, #0d1210 100%) !important;
+        border-right: 1px solid #1a3025 !important;
     }
 
     [data-testid="stSidebar"] * {
-        color: #ffffff !important;
+        color: #e0e0e0 !important;
     }
 
     [data-testid="stSidebar"] input {
-        background-color: #161a22 !important;
-        color: #ffffff !important;
-        border: 1px solid #2d333b !important;
+        background: #111916 !important;
+        border: 1px solid #1a3025 !important;
+        color: #e0e0e0 !important;
     }
 
     [data-testid="stSidebar"] .stButton button {
-        background-color: #00c853 !important;
-        color: #000 !important;
-        font-weight: bold !important;
+        background: linear-gradient(145deg, #0f2018, #142820) !important;
+        border: 1px solid #00ff6a !important;
+        color: #00ff6a !important;
+        font-weight: 700 !important;
     }
 
-    /* Ensure text inputs are visible */
+    /* STREAMLIT BUTTON OVERRIDE */
+    .stButton > button {
+        background: linear-gradient(145deg, #0f2018, #142820) !important;
+        border: 1px solid #1a4030 !important;
+        color: #00ff6a !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        font-weight: 600 !important;
+        transition: all 0.15s ease !important;
+    }
+
+    .stButton > button:hover {
+        border-color: #00ff6a !important;
+        box-shadow: 0 0 15px rgba(0, 255, 106, 0.3) !important;
+    }
+
+    /* PLOTLY CHART CONTAINER */
+    .stPlotlyChart {
+        flex: 1;
+    }
+
+    /* TEXT INPUT STYLING */
     .stTextInput input {
-        background-color: #161a22 !important;
-        color: #ffffff !important;
-        border: 1px solid #2d333b !important;
+        background: #111916 !important;
+        border: 1px solid #1a3025 !important;
+        color: #e0e0e0 !important;
+        font-family: 'JetBrains Mono', monospace !important;
     }
 
-    .stTextInput label {
-        color: #ffffff !important;
+    /* HIDE STREAMLIT ELEMENTS */
+    .stSpinner > div {
+        color: #00ff6a !important;
+    }
+
+    /* RESPONSIVE */
+    @media (max-width: 1200px) {
+        .top-bar { padding: 8px 12px; }
+        .top-bar-stat { gap: 4px; }
+        .top-bar-stat-value { font-size: 12px; }
     }
 </style>
 """
 
 # Inject CSS
-st.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
-
-# Show title immediately (prevents blank screen)
-st.markdown("""
-<div style='text-align: center; padding: 20px;'>
-    <h1 style='color: #00c853; margin: 0;'>💎 POLYMARKET 15-MIN COMBO PRINTER</h1>
-    <p style='color: #888; margin-top: 5px;'>gabagool style • Dec 2025</p>
-</div>
-""", unsafe_allow_html=True)
+st.markdown(TERMINAL_CSS, unsafe_allow_html=True)
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-# Polymarket APIs
 CLOB_HOST = "https://clob.polymarket.com"
 GAMMA_API_HOST = "https://gamma-api.polymarket.com"
-CHAIN_ID = 137  # Polygon Mainnet
+CHAIN_ID = 137
 
-# Contract addresses (Dec 2025 - Native Circle USDC)
 USDC_ADDRESS = "0x3c499c542cEF5E3811e1192ce70d8cc03d5c3359"
 CONDITIONAL_TOKENS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
 
-# Exchange contracts to approve
 EXCHANGE_CONTRACTS = [
-    "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",  # main
-    "0xC5d563A36AE78145C45a50134d48A1215220f80a",  # neg risk
-    "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296",  # neg risk adapter
+    "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",
+    "0xC5d563A36AE78145C45a50134d48A1215220f80a",
+    "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296",
 ]
 
-# Supported coins for Up/Down markets
 SLUG_COINS = ["btc", "eth", "sol", "xrp"]
 
-# Coin to Binance symbol mapping
 COIN_TO_BINANCE = {
     "BTC": "BTCUSDT",
     "ETH": "ETHUSDT",
@@ -615,18 +574,15 @@ COIN_TO_BINANCE = {
     "XRP": "XRPUSDT"
 }
 
-# Trading safety parameters
-MAX_IMBALANCE = 500          # Max allowed share imbalance
-WARN_IMBALANCE = 400         # Threshold to disable heavier side
-NO_TRADE_SECONDS = 90        # No trades in last 90 seconds
-PRICE_SLIPPAGE = 0.006       # Cross spread by 0.6 cents
-BUY_AMOUNTS = [10, 25, 50, 100]  # USD amounts for buy buttons
-REFRESH_INTERVAL = 8         # Seconds between auto-refresh
+MAX_IMBALANCE = 500
+WARN_IMBALANCE = 400
+NO_TRADE_SECONDS = 90
+PRICE_SLIPPAGE = 0.006
+BUY_AMOUNTS = [10, 25, 50, 100]
+REFRESH_INTERVAL = 8
 
-# Timezone
 ET = pytz.timezone("US/Eastern")
 
-# Minimal ERC20 ABI for approvals and balance
 MINIMAL_ERC20_ABI = [
     {
         "constant": False,
@@ -657,7 +613,6 @@ MINIMAL_ERC20_ABI = [
     }
 ]
 
-# ERC1155 ABI for Conditional Tokens (setApprovalForAll + isApprovedForAll)
 MINIMAL_ERC1155_ABI = [
     {
         "constant": False,
@@ -695,9 +650,9 @@ if 'state' not in st.session_state:
         "session_start": datetime.now(ET).isoformat(),
         "total_trades": 0,
         "daily_pnl": {},
+        "opportunities": [],
     }
 
-# Ensure all keys exist (migration safety)
 defaults = {
     "markets": {},
     "history": [],
@@ -707,6 +662,7 @@ defaults = {
     "session_start": datetime.now(ET).isoformat(),
     "total_trades": 0,
     "daily_pnl": {},
+    "opportunities": [],
 }
 
 for key, default in defaults.items():
@@ -729,16 +685,10 @@ if 'binance_data' not in st.session_state:
 # =============================================================================
 
 def get_binance_data() -> Dict[str, Dict]:
-    """
-    Fetch live prices from Binance for all supported coins.
-    Returns dict: {symbol: {"price": float, "change": float}}
-    Uses Binance.US API for US-based servers (Streamlit Cloud).
-    Falls back to CoinGecko if Binance fails.
-    """
+    """Fetch live prices from Binance for all supported coins."""
     symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"]
     data = {}
 
-    # Try Binance.US first (works from US servers)
     for sym in symbols:
         try:
             r = requests.get(
@@ -756,7 +706,6 @@ def get_binance_data() -> Dict[str, Dict]:
         except Exception:
             data[sym] = {"price": 0.0, "change": 0.0}
 
-    # If all failed, try CoinGecko as fallback
     if all(d["price"] == 0.0 for d in data.values()):
         try:
             cg_ids = "bitcoin,ethereum,solana,ripple"
@@ -783,56 +732,26 @@ def get_binance_data() -> Dict[str, Dict]:
     return data
 
 
-def format_binance_price(coin: str, binance_data: Dict) -> str:
-    """Format Binance price with change indicator for display."""
-    symbol = COIN_TO_BINANCE.get(coin, "")
-    if not symbol or symbol not in binance_data:
-        return ""
-
-    info = binance_data[symbol]
-    price = info.get("price", 0)
-    change = info.get("change", 0)
-
-    if price == 0:
-        return ""
-
-    # Format price based on magnitude
+def format_price(price: float) -> str:
+    """Format price for display."""
     if price >= 1000:
-        price_str = f"${price:,.2f}"
+        return f"${price:,.0f}"
     elif price >= 1:
-        price_str = f"${price:.2f}"
+        return f"${price:.2f}"
     else:
-        price_str = f"${price:.4f}"
-
-    # Color based on change
-    change_color = "#00c853" if change >= 0 else "#ff5252"
-    change_sign = "+" if change >= 0 else ""
-
-    return f"""<span style='color: {change_color}; font-weight: 600;'>{price_str} <span style='font-size: 0.85em;'>({change_sign}{change:.2f}%)</span></span>"""
+        return f"${price:.4f}"
 
 
 # =============================================================================
-# CLOB LIVE PRICE FETCHING - THE REAL EDGE!
+# CLOB LIVE PRICE FETCHING
 # =============================================================================
 
 def get_clob_midpoints(up_token_id: str, down_token_id: str) -> Tuple[float, float]:
-    """
-    Fetch LIVE prices from CLOB /midpoint API.
-
-    THIS IS THE ONLY SOURCE OF REAL TRADEABLE PRICES!
-
-    Gamma API outcomePrices is STALE and always sums to 1.0 (theoretical).
-    CLOB midpoint shows the actual market prices where edges exist.
-
-    Example:
-        Gamma (STALE): Up=0.355 + Down=0.645 = 1.0000 ← WRONG!
-        CLOB (LIVE):   Up=0.96  + Down=0.035 = 0.995  ← THE EDGE!
-    """
+    """Fetch LIVE prices from CLOB /midpoint API."""
     up_price = 0.5
     down_price = 0.5
 
     try:
-        # Get Up price from CLOB
         r = requests.get(
             f"https://clob.polymarket.com/midpoint?token_id={up_token_id}",
             timeout=3
@@ -843,7 +762,6 @@ def get_clob_midpoints(up_token_id: str, down_token_id: str) -> Tuple[float, flo
         pass
 
     try:
-        # Get Down price from CLOB
         r = requests.get(
             f"https://clob.polymarket.com/midpoint?token_id={down_token_id}",
             timeout=3
@@ -857,28 +775,21 @@ def get_clob_midpoints(up_token_id: str, down_token_id: str) -> Tuple[float, flo
 
 
 # =============================================================================
-# PLOTLY CHART FUNCTIONS
+# PLOTLY CHARTS
 # =============================================================================
 
-def create_equity_curve(equity_history: List[Dict], height: int = 300) -> go.Figure:
-    """Create professional dark-themed equity curve."""
-    if not equity_history:
-        fig = go.Figure()
-        fig.add_annotation(
-            text="No trading data yet",
-            xref="paper", yref="paper",
-            x=0.5, y=0.5,
-            showarrow=False,
-            font=dict(size=16, color="#888")
-        )
-    else:
+def create_equity_curve(equity_history: List[Dict], height: int = 200) -> go.Figure:
+    """Create terminal-style equity curve."""
+    fig = go.Figure()
+
+    if equity_history:
         times = [e.get("timestamp", "") for e in equity_history]
         values = [e.get("total_profit", 0) for e in equity_history]
 
-        line_color = "#00c853" if values[-1] >= 0 else "#ff5252"
-        fill_color = "rgba(0, 200, 83, 0.1)" if values[-1] >= 0 else "rgba(255, 82, 82, 0.1)"
+        current_val = values[-1] if values else 0
+        line_color = "#00ff6a" if current_val >= 0 else "#ff4d4d"
+        fill_color = "rgba(0, 255, 106, 0.1)" if current_val >= 0 else "rgba(255, 77, 77, 0.1)"
 
-        fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=times,
             y=values,
@@ -886,137 +797,30 @@ def create_equity_curve(equity_history: List[Dict], height: int = 300) -> go.Fig
             line=dict(color=line_color, width=2),
             fill='tozeroy',
             fillcolor=fill_color,
-            name='Equity'
+            hovertemplate='$%{y:.2f}<extra></extra>'
         ))
 
     fig.update_layout(
-        plot_bgcolor='#0e1117',
-        paper_bgcolor='#0e1117',
-        font=dict(color='#888'),
-        margin=dict(l=50, r=20, t=20, b=40),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#5a8a6a', family='JetBrains Mono'),
+        margin=dict(l=40, r=10, t=10, b=30),
         height=height,
         xaxis=dict(
             showgrid=True,
-            gridcolor='#2d333b',
-            showline=True,
-            linecolor='#2d333b'
+            gridcolor='rgba(26, 48, 37, 0.5)',
+            showline=False,
+            tickfont=dict(size=10)
         ),
         yaxis=dict(
             showgrid=True,
-            gridcolor='#2d333b',
-            showline=True,
-            linecolor='#2d333b',
-            tickprefix='$'
+            gridcolor='rgba(26, 48, 37, 0.5)',
+            showline=False,
+            tickprefix='$',
+            tickfont=dict(size=10)
         ),
         showlegend=False,
         hovermode='x unified'
-    )
-
-    return fig
-
-
-def create_mini_sparkline(equity_history: List[Dict], width: int = 200, height: int = 50) -> go.Figure:
-    """Create mini sparkline for header."""
-    fig = go.Figure()
-
-    if equity_history:
-        values = [e.get("total_profit", 0) for e in equity_history[-20:]]
-        line_color = "#00c853" if (values[-1] if values else 0) >= 0 else "#ff5252"
-
-        fig.add_trace(go.Scatter(
-            y=values,
-            mode='lines',
-            line=dict(color=line_color, width=2),
-            fill='tozeroy',
-            fillcolor=f"rgba({76 if values[-1] >= 0 else 255}, {175 if values[-1] >= 0 else 82}, {80 if values[-1] >= 0 else 82}, 0.2)"
-        ))
-
-    fig.update_layout(
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=0, r=0, t=0, b=0),
-        width=width,
-        height=height,
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
-        showlegend=False
-    )
-
-    return fig
-
-
-def create_pair_cost_gauge(pair_cost: float) -> go.Figure:
-    """Create circular gauge for pair cost visualization."""
-    if pair_cost < 0.98:
-        color = "#00c853"
-    elif pair_cost <= 0.985:
-        color = "#ffc107"
-    else:
-        color = "#ff5252"
-
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=pair_cost,
-        number={'prefix': "$", 'font': {'size': 24, 'color': color}},
-        gauge={
-            'axis': {'range': [0.95, 1.0], 'tickcolor': '#888'},
-            'bar': {'color': color},
-            'bgcolor': '#161a22',
-            'bordercolor': '#2d333b',
-            'steps': [
-                {'range': [0.95, 0.98], 'color': 'rgba(0, 200, 83, 0.2)'},
-                {'range': [0.98, 0.985], 'color': 'rgba(255, 193, 7, 0.2)'},
-                {'range': [0.985, 1.0], 'color': 'rgba(255, 82, 82, 0.2)'}
-            ],
-            'threshold': {
-                'line': {'color': '#fff', 'width': 2},
-                'thickness': 0.8,
-                'value': pair_cost
-            }
-        }
-    ))
-
-    fig.update_layout(
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='#888'),
-        margin=dict(l=20, r=20, t=30, b=10),
-        height=150
-    )
-
-    return fig
-
-
-def create_pnl_bar_chart(trades: List[Dict], height: int = 200) -> go.Figure:
-    """Create P/L bar chart for recent trades."""
-    fig = go.Figure()
-
-    if trades:
-        profits = []
-        labels = []
-        colors = []
-
-        for t in trades[:10]:
-            pnl = t.get("profit", 0)
-            profits.append(pnl)
-            labels.append(t.get("time", ""))
-            colors.append("#00c853" if pnl >= 0 else "#ff5252")
-
-        fig.add_trace(go.Bar(
-            x=labels,
-            y=profits,
-            marker_color=colors
-        ))
-
-    fig.update_layout(
-        plot_bgcolor='#0e1117',
-        paper_bgcolor='#0e1117',
-        font=dict(color='#888'),
-        margin=dict(l=40, r=20, t=10, b=40),
-        height=height,
-        xaxis=dict(showgrid=False),
-        yaxis=dict(showgrid=True, gridcolor='#2d333b', tickprefix='$'),
-        showlegend=False
     )
 
     return fig
@@ -1027,23 +831,19 @@ def create_pnl_bar_chart(trades: List[Dict], height: int = 200) -> go.Figure:
 # =============================================================================
 
 def get_web3() -> Web3:
-    """Get Web3 instance connected to Polygon."""
     return Web3(Web3.HTTPProvider(st.session_state.rpc_url))
 
 
 def get_wallet_address() -> str:
-    """Derive wallet address from private key."""
     account = Account.from_key(st.session_state.private_key)
     return account.address
 
 
 def get_usdc_balance() -> Optional[float]:
-    """Get USDC balance for the configured wallet."""
     try:
         web3 = get_web3()
         if not web3.is_connected():
             return None
-
         wallet_address = get_wallet_address()
         usdc = web3.eth.contract(
             address=Web3.to_checksum_address(USDC_ADDRESS),
@@ -1056,12 +856,10 @@ def get_usdc_balance() -> Optional[float]:
 
 
 def get_matic_balance() -> Optional[float]:
-    """Get MATIC (native token) balance for gas fees."""
     try:
         web3 = get_web3()
         if not web3.is_connected():
             return None
-
         wallet_address = get_wallet_address()
         raw_balance = web3.eth.get_balance(wallet_address)
         return float(raw_balance) / 1e18
@@ -1070,10 +868,6 @@ def get_matic_balance() -> Optional[float]:
 
 
 def check_existing_approvals() -> bool:
-    """
-    Check if USDC and CT approvals already exist on-chain.
-    Returns True if ALL approvals are already set, False otherwise.
-    """
     try:
         web3 = get_web3()
         if not web3.is_connected():
@@ -1114,9 +908,7 @@ def check_existing_approvals() -> bool:
 
 
 def approve_all_contracts() -> bool:
-    """Approve USDC and Conditional Tokens for all exchange contracts."""
     if st.session_state.state.get("allowance_approved", False):
-        st.info("Allowances already approved!")
         return True
 
     try:
@@ -1188,11 +980,10 @@ def approve_all_contracts() -> bool:
 
 
 # =============================================================================
-# CLOB CLIENT INITIALIZATION
+# CLOB CLIENT
 # =============================================================================
 
 def get_clob_client() -> Optional[ClobClient]:
-    """Get or create the ClobClient instance."""
     if st.session_state.client is not None:
         return st.session_state.client
 
@@ -1215,16 +1006,14 @@ def get_clob_client() -> Optional[ClobClient]:
 
 
 # =============================================================================
-# MARKET DETECTION - GAMMA API WITH LIVE PRICES FROM TOKENS
+# MARKET DETECTION
 # =============================================================================
 
 def get_current_15m_timestamp() -> int:
-    """Get Unix timestamp for current 15-minute window start."""
     return int(time.time() // 900 * 900)
 
 
 def fetch_market_by_slug(slug: str) -> Optional[Dict]:
-    """Fetch a specific market from Gamma API by slug with token prices."""
     try:
         response = requests.get(
             f"{GAMMA_API_HOST}/markets?slug={slug}",
@@ -1242,11 +1031,6 @@ def fetch_market_by_slug(slug: str) -> Optional[Dict]:
 
 
 def find_active_market_for_coin(coin: str) -> Optional[Dict]:
-    """
-    Find active market for a specific coin.
-    CRITICAL: Extract prices from the tokens array, NOT from outcomePrices.
-    The tokens array contains live prices directly from Gamma API.
-    """
     current_ts = get_current_15m_timestamp()
     timestamps_to_check = [current_ts, current_ts + 900, current_ts - 900]
 
@@ -1255,7 +1039,6 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
         market = fetch_market_by_slug(slug)
 
         if market:
-            # Parse token IDs
             token_ids_raw = market.get("clobTokenIds", [])
             if isinstance(token_ids_raw, str):
                 try:
@@ -1265,7 +1048,6 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
             else:
                 token_ids = token_ids_raw
 
-            # Parse outcomes
             outcomes_raw = market.get("outcomes", ["Up", "Down"])
             if isinstance(outcomes_raw, str):
                 try:
@@ -1275,14 +1057,7 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
             else:
                 outcomes = outcomes_raw
 
-            # ============================================================
-            # LIVE PRICE EXTRACTION FROM CLOB API
-            # DO NOT USE Gamma outcomePrices - they're stale/theoretical!
-            # CLOB /midpoint gives real tradeable prices where edges exist
-            # ============================================================
-
             if len(token_ids) >= 2 and len(outcomes) >= 2:
-                # Find up/down token indices
                 up_idx, down_idx = 0, 1
                 for i, outcome in enumerate(outcomes):
                     if str(outcome).lower() == "up":
@@ -1293,10 +1068,8 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
                 up_token_id = token_ids[up_idx]
                 down_token_id = token_ids[down_idx]
 
-                # GET LIVE PRICES FROM CLOB API - THE REAL EDGE!
                 up_price, down_price = get_clob_midpoints(up_token_id, down_token_id)
 
-                # Parse end time
                 end_time = None
                 end_date_str = market.get("endDate") or market.get("end_date_iso")
                 if end_date_str:
@@ -1325,7 +1098,6 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
 
 
 def find_all_active_updown_markets() -> List[Dict]:
-    """Find all active 15-min Up/Down markets with live prices."""
     all_markets = []
 
     for coin in SLUG_COINS:
@@ -1352,7 +1124,6 @@ def find_all_active_updown_markets() -> List[Dict]:
 
 
 def get_seconds_remaining(end_time) -> int:
-    """Calculate seconds remaining until market ends."""
     if end_time is None:
         return 999
     try:
@@ -1365,20 +1136,11 @@ def get_seconds_remaining(end_time) -> int:
         return 999
 
 
-def format_countdown(seconds: int) -> str:
-    """Format seconds as MM:SS countdown string."""
-    if seconds >= 999:
-        return "LIVE"
-    minutes, secs = divmod(seconds, 60)
-    return f"{minutes:02d}:{secs:02d}"
-
-
 # =============================================================================
 # MARKET STATE MANAGEMENT
 # =============================================================================
 
 def get_market_state(condition_id: str, coin: str) -> Dict:
-    """Get or create state for a specific market."""
     markets = st.session_state.state.get("markets", {})
 
     if "markets" not in st.session_state.state:
@@ -1399,7 +1161,6 @@ def get_market_state(condition_id: str, coin: str) -> Dict:
 
 
 def archive_old_markets(active_condition_ids: List[str]):
-    """Archive markets that are no longer active."""
     markets = st.session_state.state.get("markets", {})
     history = st.session_state.state.get("history", [])
 
@@ -1453,11 +1214,10 @@ def archive_old_markets(active_condition_ids: List[str]):
 
 
 # =============================================================================
-# TRADING FUNCTIONS - USE MARKET PRICES, NOT client.get_midpoint
+# TRADING FUNCTIONS
 # =============================================================================
 
 def get_order_book_ask(client: ClobClient, token_id: str) -> float:
-    """Get best ask price from order book for execution."""
     try:
         ob = client.get_order_book(token_id)
         if ob.asks:
@@ -1468,7 +1228,6 @@ def get_order_book_ask(client: ClobClient, token_id: str) -> float:
 
 
 def check_safety(mstate: Dict, side: str, seconds_remaining: int) -> Tuple[bool, str]:
-    """Check if a trade is allowed under safety rules."""
     if seconds_remaining < NO_TRADE_SECONDS and seconds_remaining != 999:
         return False, f"Trading disabled - {seconds_remaining}s remaining"
 
@@ -1493,7 +1252,6 @@ def check_safety(mstate: Dict, side: str, seconds_remaining: int) -> Tuple[bool,
 
 
 def should_disable_button(mstate: Dict, side: str, seconds_remaining: int) -> bool:
-    """Determine if a buy button should be disabled."""
     if seconds_remaining < NO_TRADE_SECONDS and seconds_remaining != 999:
         return True
 
@@ -1518,7 +1276,6 @@ def execute_market_buy(
     seconds_remaining: int,
     coin: str = ""
 ) -> Tuple[bool, str, float, float]:
-    """Execute a market buy order with safety checks."""
     is_allowed, reason = check_safety(mstate, side, seconds_remaining)
     if not is_allowed:
         return False, reason, 0, 0
@@ -1606,7 +1363,6 @@ def execute_market_buy(
 # =============================================================================
 
 def calculate_metrics(mstate: Dict) -> Dict[str, Any]:
-    """Calculate all position metrics for a market."""
     try:
         shares_up = mstate.get("shares_up", 0.0)
         shares_down = mstate.get("shares_down", 0.0)
@@ -1622,6 +1378,7 @@ def calculate_metrics(mstate: Dict) -> Dict[str, Any]:
 
         unbalanced = abs(shares_up - shares_down)
         imbalance_side = "up" if shares_up > shares_down else ("down" if shares_down > shares_up else None)
+        imbalance_signed = shares_up - shares_down
 
         return {
             "avg_up": avg_up,
@@ -1631,18 +1388,18 @@ def calculate_metrics(mstate: Dict) -> Dict[str, Any]:
             "locked_profit": locked_profit,
             "unbalanced": unbalanced,
             "imbalance_side": imbalance_side,
+            "imbalance_signed": imbalance_signed,
             "total_spent": spent_up + spent_down
         }
     except Exception:
         return {
             "avg_up": 0, "avg_down": 0, "avg_pair_cost": 0,
             "locked_shares": 0, "locked_profit": 0,
-            "unbalanced": 0, "imbalance_side": None, "total_spent": 0
+            "unbalanced": 0, "imbalance_side": None, "imbalance_signed": 0, "total_spent": 0
         }
 
 
 def get_total_locked_profit() -> float:
-    """Calculate total locked profit across all active markets."""
     total = 0.0
     try:
         markets = st.session_state.state.get("markets", {})
@@ -1667,7 +1424,6 @@ def get_total_locked_profit() -> float:
 
 
 def get_total_history_profit() -> float:
-    """Calculate total profit from historical markets."""
     total = 0.0
     try:
         for entry in st.session_state.state.get("history", []):
@@ -1681,7 +1437,6 @@ def get_total_history_profit() -> float:
 
 
 def calculate_session_stats() -> Dict[str, Any]:
-    """Calculate comprehensive session statistics."""
     state = st.session_state.state
 
     total_trades = state.get("total_trades", 0)
@@ -1692,7 +1447,7 @@ def calculate_session_stats() -> Dict[str, Any]:
 
     winning_markets = sum(1 for h in history if h.get("locked_profit", 0) > 0)
     total_markets = len(history)
-    win_rate = (winning_markets / total_markets * 100) if total_markets > 0 else 0
+    win_rate = (winning_markets / total_markets * 100) if total_markets > 0 else 100
 
     avg_pair_costs = []
     for mstate in state.get("markets", {}).values():
@@ -1701,48 +1456,32 @@ def calculate_session_stats() -> Dict[str, Any]:
             avg_pair_costs.append(m["avg_pair_cost"])
     avg_pair_cost = sum(avg_pair_costs) / len(avg_pair_costs) if avg_pair_costs else 0
 
-    profits = [h.get("locked_profit", 0) for h in history]
-    best_profit = max(profits) if profits else 0
-    worst_profit = min(profits) if profits else 0
-
     total_volume = sum(t.get("usdc", 0) for t in trade_log)
 
-    equity = state.get("equity_history", [])
-    if equity:
-        peak = 0
-        max_dd = 0
-        for e in equity:
-            val = e.get("total_profit", 0)
-            peak = max(peak, val)
-            dd = peak - val
-            max_dd = max(max_dd, dd)
-    else:
-        max_dd = 0
+    # Calculate equity from USDC balance + locked profit
+    usdc_bal = get_usdc_balance() or 0
+    equity = usdc_bal + total_profit
 
     return {
         "total_trades": total_trades,
         "total_profit": total_profit,
         "win_rate": win_rate,
         "avg_pair_cost": avg_pair_cost,
-        "best_profit": best_profit,
-        "worst_profit": worst_profit,
         "total_volume": total_volume,
-        "max_drawdown": max_dd,
+        "equity": equity,
         "markets_completed": total_markets,
     }
 
 
 # =============================================================================
-# BACKUP/RESTORE FUNCTIONS
+# BACKUP/RESTORE
 # =============================================================================
 
 def export_state_json() -> str:
-    """Export current state to JSON string."""
     return json.dumps(st.session_state.state, default=str, indent=2)
 
 
 def import_state_json(json_str: str) -> bool:
-    """Import state from JSON string."""
     try:
         data = json.loads(json_str)
         st.session_state.state.update(data)
@@ -1753,686 +1492,349 @@ def import_state_json(json_str: str) -> bool:
 
 
 # =============================================================================
-# SIDEBAR - WALLET & CONTROLS
+# OPPORTUNITY LOGGER
+# =============================================================================
+
+def log_opportunity(coin: str, pair_cost: float, up_price: float, down_price: float):
+    """Log market opportunity for tracking."""
+    if pair_cost < 1.0:
+        edge = (1.0 - pair_cost) * 100
+        opp = {
+            "time": datetime.now(ET).strftime("%H:%M"),
+            "coin": coin,
+            "pair_cost": pair_cost,
+            "edge": edge,
+            "up": up_price,
+            "down": down_price
+        }
+        opportunities = st.session_state.state.get("opportunities", [])
+        # Avoid duplicates within same minute
+        if not opportunities or opportunities[0].get("time") != opp["time"] or opportunities[0].get("coin") != coin:
+            opportunities.insert(0, opp)
+            st.session_state.state["opportunities"] = opportunities[:50]
+
+
+# =============================================================================
+# SIDEBAR - COMPACT WALLET
 # =============================================================================
 
 def render_sidebar():
-    """Render professional sidebar with wallet and controls."""
-
-    st.sidebar.markdown("""
-    <div style='text-align: center; padding: 10px 0;'>
-        <span style='font-size: 1.5em;'>💎</span>
-        <span style='color: #00c853; font-weight: bold; font-size: 1.1em;'> WALLET</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    if not st.session_state.wallet_connected:
-        private_key_input = st.sidebar.text_input(
-            "Private Key",
-            type="password",
-            help="Use a dedicated hot wallet"
-        )
-
-        rpc_url_input = st.sidebar.text_input(
-            "Polygon RPC",
-            value="https://polygon-rpc.com"
-        )
-
-        if st.sidebar.button("Connect Wallet", type="primary", use_container_width=True):
-            pk = private_key_input.strip()
-            if not pk.startswith("0x"):
-                pk = "0x" + pk
-
-            if len(pk) == 66:
-                try:
-                    Account.from_key(pk)
-                    st.session_state.private_key = pk
-                    st.session_state.rpc_url = rpc_url_input
-                    st.session_state.wallet_connected = True
-                    st.rerun()
-                except Exception as e:
-                    st.sidebar.error(f"Invalid key: {e}")
-            else:
-                st.sidebar.error("Key must be 64 hex characters")
-
-        st.sidebar.markdown("---")
-        st.sidebar.caption("gabagool style - Dec 2025")
-        st.stop()
-
-    try:
-        wallet_addr = get_wallet_address()
-        st.sidebar.markdown(f"""
-        <div style='background: #161a22; padding: 15px; border-radius: 10px; border: 1px solid #2d333b; margin-bottom: 15px;'>
-            <div style='color: #00c853; font-weight: bold;'>Connected</div>
-            <div style='color: #888; font-family: monospace; font-size: 0.85em;'>{wallet_addr[:8]}...{wallet_addr[-6:]}</div>
+    """Compact wallet sidebar."""
+    with st.sidebar:
+        st.markdown("""
+        <div style='text-align: center; padding: 10px 0; border-bottom: 1px solid #1a3025; margin-bottom: 15px;'>
+            <span style='color: #00ff6a; font-family: JetBrains Mono; font-weight: 800; font-size: 14px; letter-spacing: 2px;'>
+                💎 WALLET
+            </span>
         </div>
         """, unsafe_allow_html=True)
-    except:
-        st.sidebar.error("Invalid key")
-        st.stop()
 
-    st.sidebar.markdown("#### Balances")
+        if not st.session_state.wallet_connected:
+            private_key_input = st.text_input(
+                "Private Key",
+                type="password",
+                help="Hot wallet only"
+            )
 
-    col1, col2 = st.sidebar.columns(2)
+            rpc_url_input = st.text_input(
+                "RPC URL",
+                value="https://polygon-rpc.com"
+            )
 
-    usdc_bal = get_usdc_balance()
-    matic_bal = get_matic_balance()
+            if st.button("CONNECT", type="primary", use_container_width=True):
+                pk = private_key_input.strip()
+                if not pk.startswith("0x"):
+                    pk = "0x" + pk
 
-    with col1:
-        if usdc_bal is not None:
-            st.sidebar.markdown(f"""
-            <div style='background: linear-gradient(145deg, #1b5e20, #2e7d32); padding: 12px; border-radius: 8px; text-align: center;'>
-                <div style='color: #69f0ae; font-size: 1.4em; font-weight: bold;'>${usdc_bal:.2f}</div>
-                <div style='color: #a5d6a7; font-size: 0.7em;'>USDC</div>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.sidebar.warning("USDC: Error")
+                if len(pk) == 66:
+                    try:
+                        Account.from_key(pk)
+                        st.session_state.private_key = pk
+                        st.session_state.rpc_url = rpc_url_input
+                        st.session_state.wallet_connected = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Invalid: {e}")
+                else:
+                    st.error("64 hex chars required")
 
-    with col2:
-        if matic_bal is not None:
-            st.sidebar.markdown(f"""
-            <div style='background: #161a22; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #2d333b;'>
-                <div style='color: #fff; font-size: 1.1em; font-weight: bold;'>{matic_bal:.4f}</div>
-                <div style='color: #888; font-size: 0.7em;'>MATIC</div>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.sidebar.warning("MATIC: Error")
+            st.stop()
 
-    st.sidebar.markdown("---")
-
-    st.sidebar.markdown("#### Data Management")
-
-    backup_data = export_state_json()
-    b64 = base64.b64encode(backup_data.encode()).decode()
-    filename = f"polymarket_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-
-    st.sidebar.markdown(f"""
-    <a href="data:application/json;base64,{b64}" download="{filename}"
-       style="display: block; text-align: center; background: #161a22; border: 1px solid #2d333b;
-              padding: 10px; border-radius: 8px; color: #00c853; text-decoration: none;
-              font-weight: bold; margin-bottom: 10px;">
-        Download Backup
-    </a>
-    """, unsafe_allow_html=True)
-
-    uploaded_file = st.sidebar.file_uploader("Restore Backup", type="json", label_visibility="collapsed")
-    if uploaded_file:
-        content = uploaded_file.read().decode()
-        if st.sidebar.button("Restore Data", use_container_width=True):
-            if import_state_json(content):
-                st.sidebar.success("Restored!")
-                st.rerun()
-
-    st.sidebar.markdown("---")
-
-    if st.sidebar.button("Disconnect", use_container_width=True):
-        st.session_state.wallet_connected = False
-        st.session_state.private_key = ""
-        st.session_state.client = None
-        st.rerun()
-
-    st.sidebar.markdown("---")
-    st.sidebar.caption("gabagool style - Dec 2025")
-    st.sidebar.caption("4X PRINTING SEASON")
-
-
-# =============================================================================
-# HEADER BAR WITH BINANCE PRICES
-# =============================================================================
-
-def render_header(binance_data: Dict):
-    """Render professional fixed header with stats and Binance prices."""
-    stats = calculate_session_stats()
-    total_profit = stats["total_profit"]
-    profit_class = "profit-positive" if total_profit >= 0 else "profit-negative"
-    profit_sign = "+" if total_profit >= 0 else ""
-
-    # Build Binance ticker string
-    ticker_html = ""
-    for coin in ["BTC", "ETH", "SOL", "XRP"]:
-        price_html = format_binance_price(coin, binance_data)
-        if price_html:
-            ticker_html += f"<span style='margin-right: 20px;'><span style='color: #888;'>{coin}:</span> {price_html}</span>"
-
-    st.markdown(f"""
-    <div style='background: linear-gradient(180deg, #161a22 0%, #0e1117 100%);
-                border-bottom: 2px solid #00c853; padding: 20px 30px; margin: -1rem -1rem 1.5rem -1rem;
-                box-shadow: 0 4px 30px rgba(0,200,83,0.2);'>
-        <div style='display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px;'>
-            <div>
-                <div style='color: #00c853; font-size: 1.6em; font-weight: 800; letter-spacing: 3px;
-                            text-shadow: 0 0 30px rgba(0,200,83,0.4);'>
-                    POLYMARKET 15-MIN COMBO PRINTER
-                </div>
-                <div style='color: #888; font-size: 0.85em; letter-spacing: 1px; margin-top: 5px;'>
-                    {ticker_html if ticker_html else "BTC • ETH • SOL • XRP — GABAGOOL STYLE"}
-                </div>
-            </div>
-            <div style='display: flex; gap: 40px; align-items: center;'>
-                <div style='text-align: center;'>
-                    <div class='{profit_class}' style='font-size: 2em; font-weight: 800;'>
-                        {profit_sign}${abs(total_profit):.2f}
-                    </div>
-                    <div style='color: #888; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px;'>
-                        Total Locked
-                    </div>
-                </div>
-                <div style='text-align: center;'>
-                    <div style='color: #fff; font-size: 1.5em; font-weight: 700;'>{stats["total_trades"]}</div>
-                    <div style='color: #888; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px;'>
-                        Trades
-                    </div>
-                </div>
-                <div style='text-align: center;'>
-                    <div style='color: #fff; font-size: 1.5em; font-weight: 700;'>
-                        ${stats["avg_pair_cost"]:.4f}
-                    </div>
-                    <div style='color: #888; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px;'>
-                        Avg Pair Cost
-                    </div>
-                </div>
-                <div style='text-align: center;'>
-                    <div style='color: #ffc107; font-size: 1.5em; font-weight: 700;'>
-                        {stats["win_rate"]:.0f}%
-                    </div>
-                    <div style='color: #888; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px;'>
-                        Win Rate
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# =============================================================================
-# DASHBOARD TAB WITH BINANCE PRICES
-# =============================================================================
-
-def render_dashboard_tab(all_markets: List[Dict], client: ClobClient, binance_data: Dict):
-    """Render main dashboard with overview of all markets."""
-
-    st.markdown("### Market Overview")
-
-    cols = st.columns(4)
-
-    for i, market in enumerate(all_markets):
-        coin = market["coin"]
-        is_active = market.get("active", False)
-
-        with cols[i]:
-            # Use prices from market dict (from Gamma API tokens), NOT client.get_midpoint
-            if is_active:
-                up_price = market.get("up_price", 0.5)
-                down_price = market.get("down_price", 0.5)
-                pair_cost = up_price + down_price
-            else:
-                pair_cost = 0
-
-            if is_active and market.get("condition_id"):
-                mstate = get_market_state(market["condition_id"], coin)
-                metrics = calculate_metrics(mstate)
-            else:
-                metrics = {"locked_profit": 0, "locked_shares": 0}
-
-            coin_colors = {"BTC": "#f7931a", "ETH": "#627eea", "SOL": "#00ffa3", "XRP": "#888"}
-            coin_color = coin_colors.get(coin, "#888")
-
-            status_color = "#00c853" if is_active else "#ffc107"
-            status_text = "LIVE" if is_active else "WAITING"
-
-            pair_cost_color = "#00c853" if pair_cost < 0.98 else ("#ffc107" if pair_cost <= 0.985 else "#ff5252")
-
-            profit = metrics["locked_profit"]
-            profit_color = "#00c853" if profit >= 0 else "#ff5252"
-            profit_sign = "+" if profit >= 0 else ""
-
-            # Binance price for this coin
-            binance_html = format_binance_price(coin, binance_data)
+        try:
+            wallet_addr = get_wallet_address()
+            usdc_bal = get_usdc_balance() or 0
+            matic_bal = get_matic_balance() or 0
 
             st.markdown(f"""
-            <div style='background: linear-gradient(145deg, #161a22, #1a1f2a);
-                        border: 1px solid #2d333b; border-left: 4px solid {status_color};
-                        border-radius: 12px; padding: 20px; text-align: center;
-                        transition: all 0.3s ease;'>
-                <div style='color: {coin_color}; font-size: 2.2em; font-weight: 800;'>{coin}</div>
-                <div style='font-size: 0.9em; margin: 5px 0;'>{binance_html if binance_html else ""}</div>
-                <div style='color: {status_color}; font-size: 0.8em; font-weight: 600;
-                            letter-spacing: 2px; margin: 5px 0;'>{status_text}</div>
-                {"<div style='color: " + pair_cost_color + "; font-size: 1.8em; font-weight: 700; margin: 15px 0;'>$" + f"{pair_cost:.4f}" + "</div>" if is_active else "<div style='color: #888; font-size: 1.2em; margin: 15px 0;'>---</div>"}
-                <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Pair Cost</div>
-                <div style='border-top: 1px solid #2d333b; margin-top: 15px; padding-top: 15px;'>
-                    <div style='color: {profit_color}; font-size: 1.3em; font-weight: 700;'>
-                        {profit_sign}${abs(profit):.2f}
-                    </div>
-                    <div style='color: #888; font-size: 0.7em;'>Locked Profit</div>
+            <div style='background: #111916; padding: 12px; border-radius: 6px; border: 1px solid #1a3025; margin-bottom: 12px;'>
+                <div style='color: #00ff6a; font-size: 10px; letter-spacing: 1px;'>CONNECTED</div>
+                <div style='font-family: JetBrains Mono; font-size: 11px; color: #7a9a8a;'>{wallet_addr[:6]}...{wallet_addr[-4:]}</div>
+            </div>
+            <div style='display: flex; gap: 8px; margin-bottom: 12px;'>
+                <div style='flex: 1; background: #111916; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #1a3025;'>
+                    <div style='color: #00ff6a; font-family: JetBrains Mono; font-weight: 700;'>${usdc_bal:.2f}</div>
+                    <div style='color: #5a8a6a; font-size: 9px;'>USDC</div>
+                </div>
+                <div style='flex: 1; background: #111916; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #1a3025;'>
+                    <div style='color: #e0e0e0; font-family: JetBrains Mono; font-weight: 700;'>{matic_bal:.3f}</div>
+                    <div style='color: #5a8a6a; font-size: 9px;'>MATIC</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-    st.markdown("---")
+        except Exception as e:
+            st.error(f"Error: {e}")
+            st.stop()
 
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        st.markdown("### Equity Curve")
-        equity_history = st.session_state.state.get("equity_history", [])
-        fig = create_equity_curve(equity_history, height=350)
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-
-    with col2:
-        st.markdown("### Session Stats")
-        stats = calculate_session_stats()
+        # Backup download
+        backup_data = export_state_json()
+        b64 = base64.b64encode(backup_data.encode()).decode()
+        filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
 
         st.markdown(f"""
-        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 15px;'>
-            <div style='display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #2d333b;'>
-                <span style='color: #888;'>Markets Completed</span>
-                <span style='color: #fff; font-weight: bold;'>{stats["markets_completed"]}</span>
-            </div>
-            <div style='display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #2d333b;'>
-                <span style='color: #888;'>Total Volume</span>
-                <span style='color: #fff; font-weight: bold;'>${stats["total_volume"]:.2f}</span>
-            </div>
-            <div style='display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #2d333b;'>
-                <span style='color: #888;'>Best Market</span>
-                <span style='color: #00c853; font-weight: bold;'>+${stats["best_profit"]:.2f}</span>
-            </div>
-            <div style='display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #2d333b;'>
-                <span style='color: #888;'>Worst Market</span>
-                <span style='color: #ff5252; font-weight: bold;'>${stats["worst_profit"]:.2f}</span>
-            </div>
-            <div style='display: flex; justify-content: space-between; padding: 10px 0;'>
-                <span style='color: #888;'>Max Drawdown</span>
-                <span style='color: #ffc107; font-weight: bold;'>${stats["max_drawdown"]:.2f}</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("### Recent Trades")
-    trade_log = st.session_state.state.get("trade_log", [])[:10]
-
-    if trade_log:
-        df = pd.DataFrame(trade_log)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No trades yet. Start trading to see activity here.")
-
-
-# =============================================================================
-# MARKET TAB UI WITH LIVE PRICES FROM GAMMA API
-# =============================================================================
-
-def render_market_tab(market: Dict, client: ClobClient, binance_data: Dict):
-    """Render full trading interface for a single market."""
-    coin = market["coin"]
-
-    # Waiting state
-    if not market.get("active", False) or market.get("condition_id") is None:
-        st.markdown(f"""
-        <div style='background: linear-gradient(145deg, #161a22, #1a1f2a);
-                    border: 1px solid #ffc107; border-radius: 20px;
-                    padding: 60px; text-align: center; margin: 40px 0;'>
-            <div style='font-size: 4em; margin-bottom: 20px;'>⏳</div>
-            <h2 style='color: #ffc107; margin-bottom: 15px;'>{coin} - Waiting for Next Window</h2>
-            <p style='color: #888; font-size: 1.1em;'>Next 15-minute market starting soon</p>
-            <p style='color: #555; font-size: 0.9em; margin-top: 20px;'>
-                Markets refresh every 15 minutes. Short gaps during oracle finalization are normal.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        now = datetime.now(ET)
-        st.markdown(f"""
-        <div style='text-align: center; color: #888;'>
-            Current Time (ET): <span style='color: #fff; font-weight: bold;'>{now.strftime("%I:%M:%S %p")}</span>
-        </div>
-        """, unsafe_allow_html=True)
-        return
-
-    condition_id = market["condition_id"]
-    mstate = get_market_state(condition_id, coin)
-    seconds_remaining = get_seconds_remaining(market.get("end_time"))
-
-    # Binance price display
-    binance_html = format_binance_price(coin, binance_data)
-
-    # Header row: Question + Countdown + Binance Price
-    col1, col2 = st.columns([3, 1])
-
-    with col1:
-        st.markdown(f"**{market['question']}**")
-        if binance_html:
-            st.markdown(f"<div style='margin-top: 5px;'>Binance: {binance_html}</div>", unsafe_allow_html=True)
-
-    with col2:
-        if seconds_remaining < 999:
-            if seconds_remaining < NO_TRADE_SECONDS:
-                countdown_class = "countdown-danger"
-            elif seconds_remaining < 180:
-                countdown_class = "countdown-warning"
-            else:
-                countdown_class = "countdown-live"
-
-            st.markdown(f"""
-            <div class='countdown {countdown_class}'>{format_countdown(seconds_remaining)}</div>
-            """, unsafe_allow_html=True)
-
-            if seconds_remaining < NO_TRADE_SECONDS:
-                st.error("TRADING DISABLED")
-        else:
-            st.markdown("""
-            <div class='countdown countdown-live'>LIVE</div>
-            """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # ==========================================================================
-    # CRITICAL: Use prices from market dict (Gamma API tokens), NOT get_midpoint
-    # ==========================================================================
-    mid_up = market.get("up_price", 0.5)
-    mid_down = market.get("down_price", 0.5)
-    pair_cost = mid_up + mid_down
-
-    # Get ask prices from order book for execution display
-    ask_up = get_order_book_ask(client, market["up_token_id"])
-    ask_down = get_order_book_ask(client, market["down_token_id"])
-
-    # Pair cost display
-    if pair_cost < 0.98:
-        cost_class = "pair-cost-good"
-    elif pair_cost <= 0.985:
-        cost_class = "pair-cost-marginal"
-    else:
-        cost_class = "pair-cost-bad"
-
-    st.markdown(f"""
-    <div class='pair-cost-display {cost_class}'>
-        PAIR COST: ${pair_cost:.4f}
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Price cards
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown(f"""
-        <div style='background: linear-gradient(145deg, #1b5e20, #2e7d32);
-                    border: 1px solid #4caf50; border-radius: 10px; padding: 20px; text-align: center;'>
-            <div style='color: #a5d6a7; font-size: 0.8em; text-transform: uppercase;'>UP Price</div>
-            <div style='color: #69f0ae; font-size: 2em; font-weight: 800;'>${mid_up:.4f}</div>
-            <div style='color: #a5d6a7; font-size: 0.9em;'>Ask: ${ask_up:.4f}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown(f"""
-        <div style='background: linear-gradient(145deg, #b71c1c, #c62828);
-                    border: 1px solid #f44336; border-radius: 10px; padding: 20px; text-align: center;'>
-            <div style='color: #ffcdd2; font-size: 0.8em; text-transform: uppercase;'>DOWN Price</div>
-            <div style='color: #ff8a80; font-size: 2em; font-weight: 800;'>${mid_down:.4f}</div>
-            <div style='color: #ffcdd2; font-size: 0.9em;'>Ask: ${ask_down:.4f}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # Position stats
-    metrics = calculate_metrics(mstate)
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric("UP Shares", f"{mstate.get('shares_up', 0):.2f}")
-        if mstate.get('shares_up', 0) > 0:
-            st.caption(f"Avg: ${metrics['avg_up']:.4f}")
-
-    with col2:
-        st.metric("DOWN Shares", f"{mstate.get('shares_down', 0):.2f}")
-        if mstate.get('shares_down', 0) > 0:
-            st.caption(f"Avg: ${metrics['avg_down']:.4f}")
-
-    with col3:
-        st.metric("Locked Pairs", f"{metrics['locked_shares']:.2f}")
-        profit = metrics['locked_profit']
-        profit_color = "#00c853" if profit >= 0 else "#ff5252"
-        profit_sign = "+" if profit >= 0 else ""
-        st.markdown(f"<span style='color: {profit_color}; font-size: 1.5em; font-weight: bold;'>{profit_sign}${abs(profit):.2f}</span>", unsafe_allow_html=True)
-
-    with col4:
-        st.metric("Imbalance", f"{metrics['unbalanced']:.2f}")
-        if metrics['imbalance_side']:
-            st.caption(f"Heavy: {metrics['imbalance_side'].upper()}")
-        if metrics['unbalanced'] >= WARN_IMBALANCE:
-            st.warning("HIGH!")
-
-    st.markdown("---")
-
-    # Buy buttons
-    st.markdown("### Trade")
-
-    if pair_cost > 0.99:
-        st.error("Pair cost > $0.99 - Avoid trading!")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("**BUY UP**")
-        up_disabled = should_disable_button(mstate, "up", seconds_remaining)
-
-        cols = st.columns(len(BUY_AMOUNTS))
-        for i, amount in enumerate(BUY_AMOUNTS):
-            with cols[i]:
-                if st.button(
-                    f"${amount}",
-                    key=f"buy_up_{amount}_{condition_id}",
-                    disabled=up_disabled,
-                    use_container_width=True
-                ):
-                    with st.spinner(f"Buying ${amount} UP..."):
-                        success, msg, _, _ = execute_market_buy(
-                            client, market["up_token_id"], "up", amount,
-                            mstate, seconds_remaining, coin
-                        )
-                        if success:
-                            st.success(msg)
-                        else:
-                            st.error(msg)
-                        time.sleep(1)
-                        st.rerun()
-
-    with col2:
-        st.markdown("**BUY DOWN**")
-        down_disabled = should_disable_button(mstate, "down", seconds_remaining)
-
-        cols = st.columns(len(BUY_AMOUNTS))
-        for i, amount in enumerate(BUY_AMOUNTS):
-            with cols[i]:
-                if st.button(
-                    f"${amount}",
-                    key=f"buy_down_{amount}_{condition_id}",
-                    disabled=down_disabled,
-                    use_container_width=True
-                ):
-                    with st.spinner(f"Buying ${amount} DOWN..."):
-                        success, msg, _, _ = execute_market_buy(
-                            client, market["down_token_id"], "down", amount,
-                            mstate, seconds_remaining, coin
-                        )
-                        if success:
-                            st.success(msg)
-                        else:
-                            st.error(msg)
-                        time.sleep(1)
-                        st.rerun()
-
-    # Market trade log
-    trade_log = mstate.get("trade_log", [])
-    if trade_log:
-        st.markdown("---")
-        st.markdown("**Recent Trades**")
-        df = pd.DataFrame(trade_log[:10])
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-
-# =============================================================================
-# JOURNAL TAB
-# =============================================================================
-
-def render_journal_tab():
-    """Render full trade journal with filtering."""
-    st.markdown("### Trade Journal")
-
-    trade_log = st.session_state.state.get("trade_log", [])
-
-    if not trade_log:
-        st.info("No trades recorded yet. Start trading to build your journal.")
-        return
-
-    col1, col2, col3 = st.columns([1, 1, 2])
-
-    with col1:
-        coin_filter = st.selectbox("Filter by Coin", ["All", "BTC", "ETH", "SOL", "XRP"])
-
-    with col2:
-        side_filter = st.selectbox("Filter by Side", ["All", "UP", "DOWN"])
-
-    filtered = trade_log
-    if coin_filter != "All":
-        filtered = [t for t in filtered if t.get("coin") == coin_filter]
-    if side_filter != "All":
-        filtered = [t for t in filtered if t.get("side") == side_filter]
-
-    total_volume = sum(t.get("usdc", 0) for t in filtered)
-    avg_price = sum(t.get("price", 0) for t in filtered) / len(filtered) if filtered else 0
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Trades", len(filtered))
-    col2.metric("Total Volume", f"${total_volume:.2f}")
-    col3.metric("Avg Price", f"${avg_price:.4f}")
-    col4.metric("Total Shares", f"{sum(t.get('shares', 0) for t in filtered):.2f}")
-
-    st.markdown("---")
-
-    if filtered:
-        df = pd.DataFrame(filtered)
-        st.dataframe(df, use_container_width=True, hide_index=True, height=500)
-
-        csv = df.to_csv(index=False)
-        b64 = base64.b64encode(csv.encode()).decode()
-        filename = f"trade_journal_{datetime.now().strftime('%Y%m%d')}.csv"
-
-        st.markdown(f"""
-        <a href="data:text/csv;base64,{b64}" download="{filename}"
-           style="display: inline-block; background: #161a22; border: 1px solid #00c853;
-                  padding: 10px 20px; border-radius: 8px; color: #00c853; text-decoration: none;
-                  font-weight: bold;">
-            Export to CSV
+        <a href="data:application/json;base64,{b64}" download="{filename}"
+           style="display: block; text-align: center; background: #111916; border: 1px solid #1a3025;
+                  padding: 8px; border-radius: 6px; color: #00ff6a; text-decoration: none;
+                  font-family: JetBrains Mono; font-size: 11px; font-weight: 600; margin-bottom: 8px;">
+            DOWNLOAD BACKUP
         </a>
         """, unsafe_allow_html=True)
-    else:
-        st.warning("No trades match the selected filters.")
+
+        uploaded_file = st.file_uploader("Restore", type="json", label_visibility="collapsed")
+        if uploaded_file:
+            content = uploaded_file.read().decode()
+            if st.button("RESTORE", use_container_width=True):
+                if import_state_json(content):
+                    st.success("Restored!")
+                    st.rerun()
+
+        if st.button("DISCONNECT", use_container_width=True):
+            st.session_state.wallet_connected = False
+            st.session_state.private_key = ""
+            st.session_state.client = None
+            st.rerun()
 
 
 # =============================================================================
-# STATS TAB
+# GOD MODE TERMINAL UI
 # =============================================================================
 
-def render_stats_tab():
-    """Render comprehensive statistics dashboard."""
-    st.markdown("### Performance Statistics")
+def render_top_bar(stats: Dict, total_profit: float):
+    """Render thin fixed top stats bar."""
+    profit_class = "positive" if total_profit >= 0 else ""
+    profit_sign = "+" if total_profit >= 0 else ""
+    profit_pct = (total_profit / max(stats["equity"], 1)) * 100 if stats["equity"] > 0 else 0
 
-    stats = calculate_session_stats()
-
-    col1, col2, col3, col4, col5 = st.columns(5)
-
-    profit_color = "#00c853" if stats["total_profit"] >= 0 else "#ff5252"
-    profit_sign = "+" if stats["total_profit"] >= 0 else ""
-
-    with col1:
-        st.markdown(f"""
-        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 20px; text-align: center;'>
-            <div style='color: {profit_color}; font-size: 2em; font-weight: 800;'>{profit_sign}${abs(stats["total_profit"]):.2f}</div>
-            <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Total P&L</div>
+    st.markdown(f"""
+    <div class="top-bar">
+        <div class="top-bar-left">
+            <span class="top-bar-title">POLYMARKET TERMINAL</span>
+            <div class="top-bar-stat">
+                <span class="top-bar-stat-label">LOCKED</span>
+                <span class="top-bar-stat-value {profit_class}">{profit_sign}${abs(total_profit):.2f} ({profit_sign}{profit_pct:.1f}%)</span>
+            </div>
+            <div class="top-bar-stat">
+                <span class="top-bar-stat-label">TRADES</span>
+                <span class="top-bar-stat-value neutral">{stats["total_trades"]}</span>
+            </div>
+            <div class="top-bar-stat">
+                <span class="top-bar-stat-label">AVG PAIR</span>
+                <span class="top-bar-stat-value neutral">{stats["avg_pair_cost"]:.3f}</span>
+            </div>
+            <div class="top-bar-stat">
+                <span class="top-bar-stat-label">EQUITY</span>
+                <span class="top-bar-stat-value neutral">${stats["equity"]:,.0f}</span>
+            </div>
+            <div class="top-bar-stat">
+                <span class="top-bar-stat-label">WIN RATE</span>
+                <span class="top-bar-stat-value positive">{stats["win_rate"]:.0f}%</span>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
 
-    with col2:
-        st.markdown(f"""
-        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 20px; text-align: center;'>
-            <div style='color: #fff; font-size: 2em; font-weight: 800;'>{stats["total_trades"]}</div>
-            <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Total Trades</div>
-        </div>
-        """, unsafe_allow_html=True)
 
-    with col3:
-        st.markdown(f"""
-        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 20px; text-align: center;'>
-            <div style='color: #ffc107; font-size: 2em; font-weight: 800;'>{stats["win_rate"]:.1f}%</div>
-            <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Win Rate</div>
-        </div>
-        """, unsafe_allow_html=True)
+def render_market_card(market: Dict, binance_data: Dict, client: ClobClient, idx: int):
+    """Render compact market card with trading buttons."""
+    coin = market["coin"]
+    is_active = market.get("active", False)
 
-    with col4:
-        st.markdown(f"""
-        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 20px; text-align: center;'>
-            <div style='color: #00c853; font-size: 2em; font-weight: 800;'>+${stats["best_profit"]:.2f}</div>
-            <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Best Market</div>
-        </div>
-        """, unsafe_allow_html=True)
+    # Binance data
+    symbol = COIN_TO_BINANCE.get(coin, "")
+    b_data = binance_data.get(symbol, {})
+    b_price = b_data.get("price", 0)
+    b_change = b_data.get("change", 0)
 
-    with col5:
-        st.markdown(f"""
-        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 20px; text-align: center;'>
-            <div style='color: #ff5252; font-size: 2em; font-weight: 800;'>${stats["max_drawdown"]:.2f}</div>
-            <div style='color: #888; font-size: 0.75em; text-transform: uppercase;'>Max Drawdown</div>
-        </div>
-        """, unsafe_allow_html=True)
+    # Pair cost
+    up_price = market.get("up_price", 0.5)
+    down_price = market.get("down_price", 0.5)
+    pair_cost = up_price + down_price
 
-    st.markdown("---")
-
-    st.markdown("### Equity Curve")
-    equity_history = st.session_state.state.get("equity_history", [])
-    fig = create_equity_curve(equity_history, height=400)
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-
-    st.markdown("---")
-
-    st.markdown("### Completed Markets")
-
-    history = st.session_state.state.get("history", [])
-
-    if history:
-        df = pd.DataFrame(history[:50])
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    # Determine pair cost color class
+    if pair_cost < 0.98:
+        pair_class = "good"
+    elif pair_cost <= 0.985:
+        pair_class = "marginal"
     else:
-        st.info("No completed markets yet.")
+        pair_class = "bad"
 
-    st.markdown("---")
+    # Market state
+    condition_id = market.get("condition_id")
+    if is_active and condition_id:
+        mstate = get_market_state(condition_id, coin)
+        metrics = calculate_metrics(mstate)
+        locked_profit = metrics["locked_profit"]
+        imbalance = int(metrics["imbalance_signed"])
+        seconds_remaining = get_seconds_remaining(market.get("end_time"))
 
-    st.markdown("### Session Info")
+        # Log opportunity
+        log_opportunity(coin, pair_cost, up_price, down_price)
+    else:
+        mstate = {}
+        locked_profit = 0
+        imbalance = 0
+        seconds_remaining = 999
 
-    session_start = st.session_state.state.get("session_start", "Unknown")
+    # Coin color
+    coin_colors = {"BTC": "#f7931a", "ETH": "#627eea", "SOL": "#00ffa3", "XRP": "#c0c0c0"}
+    coin_color = coin_colors.get(coin, "#888")
 
-    col1, col2 = st.columns(2)
+    # Change color
+    change_class = "up" if b_change >= 0 else "down"
+    change_sign = "+" if b_change >= 0 else ""
 
-    with col1:
-        st.markdown(f"""
-        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 15px;'>
-            <div style='color: #888; font-size: 0.8em;'>Session Started</div>
-            <div style='color: #fff; font-weight: bold;'>{session_start}</div>
+    # Edge class
+    edge_class = "edge" if pair_cost < 0.98 and is_active else ""
+
+    card_html = f"""
+    <div class="market-card {edge_class}">
+        <div class="market-card-header">
+            <div class="coin-badge">
+                <span class="coin-symbol" style="color: {coin_color};">{coin}</span>
+                <span class="coin-price">15m</span>
+                {f'<span class="coin-price">{format_price(b_price)}</span>' if b_price > 0 else ''}
+                {f'<span class="coin-change {change_class}">({change_sign}{b_change:.2f}%)</span>' if b_price > 0 else ''}
+            </div>
+            <div class="market-locked">
+                <div class="locked-value">+${locked_profit:.2f}</div>
+                <div class="locked-label">LOCKED</div>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown(f"""
-        <div style='background: #161a22; border: 1px solid #2d333b; border-radius: 10px; padding: 15px;'>
-            <div style='color: #888; font-size: 0.8em;'>Total Volume Traded</div>
-            <div style='color: #fff; font-weight: bold;'>${stats["total_volume"]:.2f}</div>
+        <div class="pair-row">
+            <span class="pair-label">PAIR</span>
+            <span class="pair-cost {pair_class}">{pair_cost:.4f}</span>
         </div>
-        """, unsafe_allow_html=True)
+        <div class="price-row">
+            <span>Up <span class="price-up">{up_price:.3f}</span></span>
+            <span>Down <span class="price-down">{down_price:.3f}</span></span>
+            <span>Imbal <span class="imbal">{imbalance:+d}</span></span>
+        </div>
+    </div>
+    """
+
+    st.markdown(card_html, unsafe_allow_html=True)
+
+    # Buy buttons (only if active)
+    if is_active and condition_id and client:
+        btn_cols = st.columns(4)
+
+        for i, amount in enumerate(BUY_AMOUNTS):
+            with btn_cols[i]:
+                disabled = should_disable_button(mstate, "up", seconds_remaining) and should_disable_button(mstate, "down", seconds_remaining)
+                if st.button(f"${amount}", key=f"buy_{coin}_{amount}_{idx}", disabled=disabled, use_container_width=True):
+                    # Buy both sides
+                    with st.spinner(f"Buying ${amount} combo..."):
+                        half = amount / 2
+                        success_up, msg_up, _, _ = execute_market_buy(
+                            client, market["up_token_id"], "up", half,
+                            mstate, seconds_remaining, coin
+                        )
+                        success_down, msg_down, _, _ = execute_market_buy(
+                            client, market["down_token_id"], "down", half,
+                            mstate, seconds_remaining, coin
+                        )
+                        if success_up and success_down:
+                            st.success(f"Combo: {msg_up} + {msg_down}")
+                        else:
+                            st.warning(f"Partial: UP={msg_up}, DOWN={msg_down}")
+                        time.sleep(1)
+                        st.rerun()
+
+
+def render_opportunities_panel():
+    """Render recent opportunities list."""
+    opportunities = st.session_state.state.get("opportunities", [])
+
+    # Find best opportunity
+    best_idx = -1
+    best_edge = 0
+    for i, opp in enumerate(opportunities[:12]):
+        if opp.get("edge", 0) > best_edge:
+            best_edge = opp["edge"]
+            best_idx = i
+
+    opps_html = ""
+    for i, opp in enumerate(opportunities[:12]):
+        is_best = i == best_idx
+        best_badge = '<span class="opp-best">BEST</span>' if is_best else ''
+
+        opps_html += f"""
+        <div class="opp-row">
+            <span class="opp-time">{opp.get("time", "")}</span>
+            <span class="opp-coin">{opp.get("coin", "")}</span>
+            <span class="opp-pair">{opp.get("pair_cost", 0):.3f}</span>
+            <span class="opp-edge">edge {opp.get("edge", 0):.1f}%</span>
+            {best_badge}
+        </div>
+        """
+
+    # Calculate missed profit estimate
+    missed_profit = sum(opp.get("edge", 0) * 10 for opp in opportunities[:12]) / 100  # Assume $10 per opportunity
+
+    return f"""
+    <div class="opportunities-panel">
+        <div class="panel-header">
+            <span class="panel-title">LAST 12 OPPORTUNITIES</span>
+        </div>
+        {opps_html if opps_html else '<div style="color: #5a8a6a; text-align: center; padding: 20px;">No opportunities logged yet</div>'}
+        <div class="missed-profit">
+            Estimated missed if sleeping: <span class="missed-value">+${missed_profit:.2f}</span>
+        </div>
+    </div>
+    """
+
+
+def render_bottom_ticker():
+    """Render scrolling recent trades ticker."""
+    trade_log = st.session_state.state.get("trade_log", [])[:20]
+
+    ticker_items = ""
+    for t in trade_log:
+        # Calculate approximate profit contribution
+        price = t.get("price", 0)
+        profit = t.get("usdc", 0) * (1 - price) if price > 0 else 0
+
+        ticker_items += f"""
+        <div class="ticker-item">
+            <span class="ticker-time">{t.get("time", "")}</span>
+            <span class="ticker-coin">{t.get("coin", "")}</span>
+            bought
+            <span class="ticker-amount">${t.get("usdc", 0):.0f}</span>
+            @ {t.get("price", 0):.3f} →
+            <span class="ticker-profit">+${profit:.2f} locked</span>
+        </div>
+        """
+
+    # Duplicate for seamless scroll
+    ticker_content = ticker_items + ticker_items if ticker_items else '<div class="ticker-item">No trades yet - start trading to see activity here</div>'
+
+    st.markdown(f"""
+    <div class="bottom-ticker">
+        <div class="ticker-content">
+            {ticker_content}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # =============================================================================
@@ -2440,86 +1842,94 @@ def render_stats_tab():
 # =============================================================================
 
 def main():
-    """Main Streamlit application."""
+    """Main god-mode terminal."""
 
-    # Render sidebar
+    # Sidebar wallet
     render_sidebar()
 
     state = st.session_state.state
 
-    # Check if approvals already exist on-chain (auto-detect)
+    # Check approvals
     if not state.get("allowance_approved", False):
-        with st.spinner("Checking existing approvals..."):
+        with st.spinner("Checking approvals..."):
             if check_existing_approvals():
                 st.session_state.state["allowance_approved"] = True
                 st.rerun()
 
-    # Setup check - only show if approvals don't exist on-chain
+    # Setup screen if needed
     if not state.get("allowance_approved", False):
-        st.warning("First-time setup required: Approve token spending")
+        st.markdown("""
+        <div style='text-align: center; padding: 100px 20px;'>
+            <h2 style='color: #00ff6a;'>First-Time Setup Required</h2>
+            <p style='color: #7a9a8a;'>Approve token spending to start trading</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            if st.button("SETUP: Approve Allowances", type="primary", use_container_width=True):
+            if st.button("SETUP: APPROVE ALLOWANCES", type="primary", use_container_width=True):
                 with st.spinner("Sending approval transactions..."):
                     if approve_all_contracts():
                         st.rerun()
-
         st.stop()
 
-    # Get CLOB client
+    # Get client
     client = get_clob_client()
     if client is None:
         st.error("Failed to initialize trading client.")
         st.stop()
 
-    # Fetch Binance data every refresh
+    # Fetch data
     binance_data = get_binance_data()
     st.session_state.binance_data = binance_data
 
-    # Render header with Binance prices
-    render_header(binance_data)
-
-    # Get all markets with live prices from Gamma API tokens
     all_markets = find_all_active_updown_markets()
 
     # Archive old markets
     active_ids = [m["condition_id"] for m in all_markets if m.get("condition_id")]
     archive_old_markets(active_ids)
 
-    # Main tabs
-    tab_names = ["DASHBOARD"]
-    for m in all_markets:
-        status = "🟢" if m.get("active", False) else "⏳"
-        tab_names.append(f"{status} {m['coin']} 15m")
-    tab_names.extend(["JOURNAL", "STATS"])
+    # Calculate stats
+    stats = calculate_session_stats()
+    total_profit = get_total_locked_profit() + get_total_history_profit()
 
-    tabs = st.tabs(tab_names)
+    # Render top bar
+    render_top_bar(stats, total_profit)
 
-    # Dashboard tab
-    with tabs[0]:
-        render_dashboard_tab(all_markets, client, binance_data)
+    # Add spacing for top bar
+    st.markdown("<div style='height: 56px;'></div>", unsafe_allow_html=True)
 
-    # Market tabs
-    for i, market in enumerate(all_markets):
-        with tabs[i + 1]:
-            render_market_tab(market, client, binance_data)
+    # Main layout: two columns
+    left_col, right_col = st.columns([1, 2])
 
-    # Journal tab
-    with tabs[-2]:
-        render_journal_tab()
+    with left_col:
+        # Market cards
+        for idx, market in enumerate(all_markets):
+            render_market_card(market, binance_data, client, idx)
 
-    # Stats tab
-    with tabs[-1]:
-        render_stats_tab()
+    with right_col:
+        # Equity curve panel
+        st.markdown("""
+        <div class="equity-panel">
+            <div class="panel-header">
+                <span class="panel-title">EQUITY CURVE</span>
+            </div>
+        """, unsafe_allow_html=True)
 
-    # Refresh
-    st.markdown("---")
+        equity_history = state.get("equity_history", [])
+        fig = create_equity_curve(equity_history, height=250)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col2:
-        if st.button("Refresh Now", use_container_width=True):
-            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Opportunities panel
+        st.markdown(render_opportunities_panel(), unsafe_allow_html=True)
+
+    # Bottom ticker
+    render_bottom_ticker()
+
+    # Spacer for bottom ticker
+    st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
 
     # Auto-refresh
     time.sleep(REFRESH_INTERVAL)
