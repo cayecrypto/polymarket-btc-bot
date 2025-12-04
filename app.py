@@ -82,8 +82,9 @@ st.markdown("""
 # CONFIGURATION
 # =============================================================================
 
-# Polymarket CLOB API
+# Polymarket APIs
 CLOB_HOST = "https://clob.polymarket.com"
+GAMMA_API_HOST = "https://gamma-api.polymarket.com"
 CHAIN_ID = 137  # Polygon Mainnet
 
 # Contract addresses (Dec 2025 - Native Circle USDC)
@@ -452,113 +453,125 @@ def get_clob_client() -> Optional[ClobClient]:
 
 
 # =============================================================================
-# MARKET DETECTION - BULLETPROOF (NO TIME PARSING)
+# MARKET DETECTION - GAMMA API (15-MIN MARKETS)
 # =============================================================================
 
-def detect_coin_from_question(question: str) -> Optional[str]:
+# Coins to search for (lowercase for slug generation)
+SLUG_COINS = ["btc", "eth", "sol", "xrp"]
+
+
+def get_current_15m_timestamp() -> int:
     """
-    Detect which coin this market is for.
-    Returns the coin symbol (BTC, ETH, SOL, XRP) or None.
+    Get the Unix timestamp for the current 15-minute window start.
+    15-min markets align to 15-minute boundaries (900 seconds).
     """
-    q_lower = question.lower()
-
-    # Check for each supported coin keyword
-    for keyword in COIN_KEYWORDS:
-        if keyword in q_lower:
-            return COIN_MAP.get(keyword)
-
-    return None
+    now = int(time.time())
+    return (now // 900) * 900
 
 
-def fetch_active_markets() -> List[Dict]:
-    """Fetch all active markets from Polymarket CLOB API."""
+def generate_candidate_slugs() -> List[str]:
+    """
+    Generate slug candidates for current and nearby windows.
+    Checks multiple windows to catch markets that just started or are about to end.
+    """
+    base_ts = get_current_15m_timestamp()
+    slugs = []
+
+    # Check current window, previous 2 windows, and next window
+    # This catches markets in various states of their lifecycle
+    for offset in [-1800, -900, 0, 900]:  # -30min, -15min, now, +15min
+        ts = base_ts + offset
+        for coin in SLUG_COINS:
+            slugs.append(f"{coin}-updown-15m-{ts}")
+
+    return slugs
+
+
+def fetch_market_by_slug(slug: str) -> Optional[Dict]:
+    """
+    Fetch a specific market from Gamma API by slug.
+    Returns the market dict if found and active, None otherwise.
+    """
     try:
         response = requests.get(
-            f"{CLOB_HOST}/markets?active=true",
-            timeout=15,
+            f"{GAMMA_API_HOST}/markets?slug={slug}",
+            timeout=10,
             headers={"Accept": "application/json"}
         )
-        response.raise_for_status()
-        data = response.json()
-
-        # API returns list directly or {"data": [...]}
-        if isinstance(data, dict) and "data" in data:
-            return data["data"]
-        elif isinstance(data, list):
-            return data
-        return []
-    except requests.RequestException as e:
-        st.warning(f"Error fetching markets: {e}")
-        return []
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0:
+                market = data[0]
+                # Only return if active and not closed
+                if market.get("active", False) and not market.get("closed", False):
+                    return market
+        return None
+    except Exception:
+        return None
 
 
 def find_all_active_updown_markets() -> List[Dict]:
     """
-    Find all currently active Up/Down markets for supported coins.
-    BULLETPROOF: No time parsing - just trust Polymarket's active flag.
+    Find all active 15-min Up/Down markets by querying Gamma API.
+    Uses timestamp-based slug generation since these markets aren't in general listings.
     """
-    markets_data = fetch_active_markets()
     active_markets = []
+    seen_condition_ids = set()  # Avoid duplicates
 
-    for m in markets_data:
-        try:
-            # Skip inactive/closed markets
-            if not m.get("active", False) or m.get("closed", False):
+    candidate_slugs = generate_candidate_slugs()
+
+    for slug in candidate_slugs:
+        market = fetch_market_by_slug(slug)
+        if market:
+            condition_id = market.get("conditionId")
+
+            # Skip if we already found this market
+            if condition_id in seen_condition_ids:
                 continue
+            seen_condition_ids.add(condition_id)
 
-            question = m.get("question", "")
-            q_lower = question.lower()
+            # Extract token IDs from clobTokenIds array
+            # First token is Up, second is Down (based on outcomes array order)
+            token_ids = market.get("clobTokenIds", [])
+            outcomes = market.get("outcomes", ["Up", "Down"])
+            prices = market.get("outcomePrices", ["0.5", "0.5"])
 
-            # Check if it's an up/down market for supported coins
-            if "up or down" not in q_lower:
-                continue
+            if len(token_ids) >= 2:
+                # Determine which index is Up vs Down
+                up_idx = 0
+                down_idx = 1
+                for i, outcome in enumerate(outcomes):
+                    if outcome.lower() == "up":
+                        up_idx = i
+                    elif outcome.lower() == "down":
+                        down_idx = i
 
-            # Check for any supported coin
-            if not any(coin in q_lower for coin in COIN_KEYWORDS):
-                continue
-
-            # Detect coin symbol
-            coin = detect_coin_from_question(question)
-            if coin is None:
-                continue
-
-            # Extract token IDs for Up and Down outcomes
-            tokens = m.get("tokens", [])
-            up_token = None
-            down_token = None
-
-            for token in tokens:
-                outcome = token.get("outcome", "").lower()
-                if outcome == "up":
-                    up_token = token
-                elif outcome == "down":
-                    down_token = token
-
-            if up_token and down_token:
-                # Get end_time from API if available (for countdown), otherwise None
-                end_time_str = m.get("end_date_iso") or m.get("end_time")
+                # Parse end time from endDate field
                 end_time = None
-                if end_time_str:
+                end_date_str = market.get("endDate") or market.get("end_date_iso")
+                if end_date_str:
                     try:
                         from dateutil import parser as dateutil_parser
-                        end_time = dateutil_parser.parse(end_time_str)
+                        end_time = dateutil_parser.parse(end_date_str)
                         if end_time.tzinfo is None:
                             end_time = ET.localize(end_time)
                     except:
                         end_time = None
 
+                # Extract coin from slug (e.g., "btc-updown-15m-123" -> "BTC")
+                coin = slug.split("-")[0].upper()
+
                 active_markets.append({
-                    "condition_id": m.get("condition_id"),
+                    "condition_id": condition_id,
                     "coin": coin,
-                    "question": question,
-                    "end_time": end_time,  # May be None
-                    "up_token_id": up_token["token_id"],
-                    "down_token_id": down_token["token_id"],
-                    "up_price": float(up_token.get("price", 0.5)),
-                    "down_price": float(down_token.get("price", 0.5)),
+                    "question": market.get("question", f"{coin} Up or Down"),
+                    "slug": slug,
+                    "end_time": end_time,
+                    "up_token_id": token_ids[up_idx],
+                    "down_token_id": token_ids[down_idx],
+                    "up_price": float(prices[up_idx]) if len(prices) > up_idx else 0.5,
+                    "down_price": float(prices[down_idx]) if len(prices) > down_idx else 0.5,
                 })
-        except Exception:
-            continue
 
     # Sort by coin name for consistent tab order
     coin_order = {"BTC": 0, "ETH": 1, "SOL": 2, "XRP": 3}
