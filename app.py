@@ -293,14 +293,15 @@ def approve_all_contracts() -> bool:
                 try:
                     nonce = web3.eth.get_transaction_count(wallet_address)
 
+                    # High-gas settings for reliable approvals even during Polygon spikes (Dec 2025)
                     tx = token_contract.functions.approve(
                         Web3.to_checksum_address(contract_addr),
                         2**256 - 1  # Unlimited approval
                     ).build_transaction({
                         "chainId": 137,
-                        "gas": 100_000,
-                        "maxFeePerGas": web3.to_wei(60, "gwei"),
-                        "maxPriorityFeePerGas": web3.to_wei(2, "gwei"),
+                        "gas": 120_000,
+                        "maxFeePerGas": web3.to_wei(120, "gwei"),
+                        "maxPriorityFeePerGas": web3.to_wei(40, "gwei"),  # 40 gwei tip guarantees instant confirmation
                         "nonce": nonce,
                     })
 
