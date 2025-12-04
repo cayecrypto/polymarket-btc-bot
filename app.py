@@ -1945,8 +1945,8 @@ def import_state_json(json_str: str) -> bool:
 # =============================================================================
 
 def log_opportunity(coin: str, pair_cost: float, up_price: float, down_price: float):
-    """Log market opportunity for tracking. Only logs edges >= 0.5%."""
-    MIN_EDGE_PCT = 0.5  # Only log opportunities with at least 0.5% edge
+    """Log market opportunity for tracking. Only logs edges >= 2% (pair cost < 0.98)."""
+    MIN_EDGE_PCT = 2.0  # Only log opportunities with at least 2% edge (pair < 0.98)
 
     if pair_cost < 1.0:
         edge = (1.0 - pair_cost) * 100
@@ -2307,7 +2307,7 @@ def render_opportunities_panel():
     opp_count = len([o for o in opportunities[:12] if o.get("edge", 0) >= 0.5])
 
     if not opps_html:
-        opps_html = '<div style="color: #5a8a6a; text-align: center; padding: 20px;">No good opportunities yet (need ≥0.5% edge)</div>'
+        opps_html = '<div style="color: #5a8a6a; text-align: center; padding: 20px;">No good opportunities yet (need ≥2% edge / pair &lt;0.98)</div>'
 
     # Get cumulative totals
     cumulative_missed = st.session_state.state.get("cumulative_missed_profit", 0.0)
