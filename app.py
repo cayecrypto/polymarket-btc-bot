@@ -99,27 +99,63 @@ if 'client' not in st.session_state:
 st.sidebar.header("🔑 Wallet Setup (private to your browser only)")
 st.sidebar.markdown("Your private key stays in your browser session — never sent anywhere. Close tab = gone.")
 
-private_key = st.sidebar.text_input(
-    "MetaMask/Rabby Private Key (0x...)",
-    type="password",
-    help="Use a dedicated hot wallet with only your trading funds."
-)
+# Initialize wallet_connected state
+if 'wallet_connected' not in st.session_state:
+    st.session_state.wallet_connected = False
+    st.session_state.private_key = ""
+    st.session_state.rpc_url = "https://polygon-rpc.com"
 
-rpc_url = st.sidebar.text_input(
-    "Polygon RPC URL",
-    value="https://polygon-rpc.com",
-    help="Free public or use your Alchemy/Infura link for zero lag"
-)
+# If not connected, show input form
+if not st.session_state.wallet_connected:
+    private_key_input = st.sidebar.text_input(
+        "Private Key (with or without 0x)",
+        type="password",
+        help="Use a dedicated hot wallet with only your trading funds."
+    )
 
-# Validate private key
-if not private_key or not private_key.startswith("0x") or len(private_key) != 66:
-    st.warning("⚠️ Enter a valid private key in the sidebar to start the bot")
+    rpc_url_input = st.sidebar.text_input(
+        "Polygon RPC URL",
+        value="https://polygon-rpc.com",
+        help="Free public or use your Alchemy/Infura link for zero lag"
+    )
+
+    if st.sidebar.button("🔓 Connect Wallet", type="primary", use_container_width=True):
+        # Normalize private key - add 0x if missing
+        pk = private_key_input.strip()
+        if not pk.startswith("0x"):
+            pk = "0x" + pk
+
+        # Validate: should be 66 chars with 0x prefix (64 hex + "0x")
+        if len(pk) == 66:
+            try:
+                # Test if it's a valid key by deriving address
+                from eth_account import Account
+                test_account = Account.from_key(pk)
+
+                # Success! Store in session
+                st.session_state.private_key = pk
+                st.session_state.rpc_url = rpc_url_input
+                st.session_state.wallet_connected = True
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Invalid private key: {e}")
+        else:
+            st.sidebar.error(f"Private key should be 64 hex characters (got {len(pk)-2})")
+
     st.sidebar.markdown("---")
     st.sidebar.caption("gabagool style • Dec 2025 • printing season with the bros")
+    st.warning("⚠️ Enter your private key and click 'Connect Wallet' to start")
     st.stop()
 
-PRIVATE_KEY = private_key
-POLYGON_RPC_URL = rpc_url
+# Wallet is connected - show status and disconnect option
+PRIVATE_KEY = st.session_state.private_key
+POLYGON_RPC_URL = st.session_state.rpc_url
+
+if st.sidebar.button("🔒 Disconnect Wallet", use_container_width=True):
+    st.session_state.wallet_connected = False
+    st.session_state.private_key = ""
+    st.session_state.client = None
+    st.rerun()
 
 # =============================================================================
 # CONFIGURATION
