@@ -835,22 +835,28 @@ def get_clob_midpoints(up_token_id: str, down_token_id: str) -> Tuple[float, flo
     try:
         r = requests.get(
             f"https://clob.polymarket.com/midpoint?token_id={up_token_id}",
-            timeout=3
+            timeout=5
         )
         if r.status_code == 200:
-            up_price = float(r.json().get("mid", 0.5))
-    except Exception:
-        pass
+            data = r.json()
+            up_price = float(data.get("mid", 0.5))
+    except Exception as e:
+        print(f"[CLOB] Up price fetch error: {e}")
 
     try:
         r = requests.get(
             f"https://clob.polymarket.com/midpoint?token_id={down_token_id}",
-            timeout=3
+            timeout=5
         )
         if r.status_code == 200:
-            down_price = float(r.json().get("mid", 0.5))
-    except Exception:
-        pass
+            data = r.json()
+            down_price = float(data.get("mid", 0.5))
+    except Exception as e:
+        print(f"[CLOB] Down price fetch error: {e}")
+
+    # Debug: print pair cost
+    pair = up_price + down_price
+    print(f"[CLOB] Fetched: up={up_price:.3f}, down={down_price:.3f}, pair={pair:.4f}")
 
     return up_price, down_price
 
