@@ -2,15 +2,18 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app
+# Copy app files
 COPY . .
 
-# Expose port (Railway will set PORT env var)
-EXPOSE 8080
+# Railway sets PORT env var dynamically
+ENV PORT=8080
 
-# Start Streamlit - use shell form to expand $PORT
-CMD streamlit run app.py --server.port=${PORT:-8080} --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false
+# Expose the port
+EXPOSE ${PORT}
+
+# Use exec form with shell wrapper to properly expand PORT
+CMD ["sh", "-c", "streamlit run app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false"]
