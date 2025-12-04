@@ -922,6 +922,16 @@ if 'auto_mode' not in st.session_state:
 if 'auto_log' not in st.session_state:
     st.session_state.auto_log = []  # Last 30 auto trades
 
+if 'debug_log' not in st.session_state:
+    st.session_state.debug_log = []  # Debug messages for troubleshooting
+
+def debug_log(msg: str):
+    """Add a timestamped debug message to the log."""
+    timestamp = datetime.now(ET).strftime("%H:%M:%S.%f")[:-3]
+    entry = f"[{timestamp}] {msg}"
+    st.session_state.debug_log.insert(0, entry)
+    st.session_state.debug_log = st.session_state.debug_log[:100]  # Keep last 100
+
 if 'last_auto_trade_time' not in st.session_state:
     st.session_state.last_auto_trade_time = 0  # Unix timestamp of last auto trade
 
@@ -1254,18 +1264,28 @@ def get_clob_client() -> ClobClient:
     if st.session_state.get("client") is not None:
         return st.session_state.client
 
+    debug_log("=== INITIALIZING CLOB CLIENT ===")
+
     # Get all credentials
     private_key = os.getenv("POLYMARKET_PRIVATE_KEY", "")
     api_key = os.getenv("POLYMARKET_API_KEY")
     api_secret = os.getenv("POLYMARKET_API_SECRET")
     api_passphrase = os.getenv("POLYMARKET_API_PASSPHRASE")
 
+    # Log credential status (masked)
+    debug_log(f"PRIVATE_KEY: {'SET (' + str(len(private_key)) + ' chars)' if private_key else 'MISSING'}")
+    debug_log(f"API_KEY: {'SET (' + api_key[:8] + '...)' if api_key else 'MISSING'}")
+    debug_log(f"API_SECRET: {'SET (' + str(len(api_secret)) + ' chars)' if api_secret else 'MISSING'}")
+    debug_log(f"API_PASSPHRASE: {'SET (' + str(len(api_passphrase)) + ' chars)' if api_passphrase else 'MISSING'}")
+
     # Validate required credentials
     if not private_key:
+        debug_log("ERROR: Missing POLYMARKET_PRIVATE_KEY")
         st.error("Missing POLYMARKET_PRIVATE_KEY - required for signing trades")
         st.stop()
 
     if not all([api_key, api_secret, api_passphrase]):
+        debug_log("ERROR: Missing API credentials")
         st.error("Missing Polymarket API credentials (KEY/SECRET/PASSPHRASE)")
         st.stop()
 
@@ -1273,6 +1293,7 @@ def get_clob_client() -> ClobClient:
     pk = private_key.strip()
     if pk.startswith("0x"):
         pk = pk[2:]
+    debug_log(f"Private key cleaned: {len(pk)} hex chars")
 
     # Create API credentials object
     creds = ApiCreds(
@@ -1280,25 +1301,38 @@ def get_clob_client() -> ClobClient:
         api_secret=api_secret,
         api_passphrase=api_passphrase
     )
+    debug_log("ApiCreds object created")
 
     # Initialize client with private key for signing
+    debug_log("Creating ClobClient with private key...")
     client = ClobClient(
         host="https://clob.polymarket.com",
         key=pk,
         chain_id=137,
         signature_type=2,  # Polygon proxy wallet
     )
+    debug_log("ClobClient created (no API creds yet)")
 
     # CRITICAL: Set API credentials AFTER initialization to bypass Cloudflare
+    debug_log("Calling set_api_creds()...")
     client.set_api_creds(creds)
+    debug_log("set_api_creds() completed")
+
+    # Verify creds are set by checking internal state
+    if hasattr(client, 'creds') and client.creds:
+        debug_log(f"Verified: client.creds.api_key = {client.creds.api_key[:8]}...")
+    else:
+        debug_log("WARNING: client.creds not set after set_api_creds()!")
 
     # Get wallet address from private key
     wallet_address = client.get_address()
+    debug_log(f"Wallet address: {wallet_address}")
     st.session_state.wallet_address = wallet_address
     st.session_state.wallet_connected = True
     st.session_state.rpc_url = "https://polygon-rpc.com"
     st.session_state.api_cred_status = "API + signing key"
 
+    debug_log("=== CLIENT READY ===")
     st.session_state.client = client
     return client
 
@@ -1574,26 +1608,45 @@ def execute_market_buy(
     seconds_remaining: int,
     coin: str = ""
 ) -> Tuple[bool, str, float, float]:
+    debug_log(f"=== EXECUTE BUY: {coin} {side.upper()} ${cost_usd:.2f} ===")
+    debug_log(f"Token ID: {token_id[:20]}...")
+
     is_allowed, reason = check_safety(mstate, side, seconds_remaining)
     if not is_allowed:
+        debug_log(f"Safety check failed: {reason}")
         return False, reason, 0, 0
 
     try:
+        # Check if client has API creds set
+        if hasattr(client, 'creds') and client.creds:
+            debug_log(f"Client API creds: {client.creds.api_key[:8]}...")
+        else:
+            debug_log("WARNING: No API creds on client!")
+
+        debug_log("Fetching order book...")
         try:
             ob = client.get_order_book(token_id)
+            debug_log(f"Order book fetched: {len(ob.asks) if ob.asks else 0} asks")
         except Exception as e:
-            error_str = str(e)[:80]
-            return False, f"Order book error: {error_str}", 0, 0
+            error_str = str(e)
+            debug_log(f"ORDER BOOK ERROR: {error_str}")
+            # Check if this is a 403 error
+            if "403" in error_str or "Cloudflare" in error_str.lower():
+                debug_log("!!! 403/CLOUDFLARE ERROR on get_order_book !!!")
+            return False, f"Order book error: {error_str[:80]}", 0, 0
 
         if not ob.asks:
+            debug_log("No asks in order book")
             return False, "No asks available", 0, 0
 
         best_ask = float(ob.asks[0].price)
         exec_price = round(best_ask + PRICE_SLIPPAGE, 3)
         exec_price = min(exec_price, 0.99)
+        debug_log(f"Best ask: {best_ask}, exec price: {exec_price}")
 
         size = cost_usd / best_ask
         if size < 0.01:
+            debug_log(f"Order too small: {size}")
             return False, f"Order too small: {size:.4f} shares", 0, 0
 
         order_args = OrderArgs(
@@ -1602,12 +1655,22 @@ def execute_market_buy(
             size=size,
             side="BUY"
         )
+        debug_log(f"OrderArgs: price={exec_price}, size={size:.4f}")
 
+        debug_log("Calling create_and_post_order...")
         try:
             response = client.create_and_post_order(order_args)
+            debug_log(f"Order response: {str(response)[:200]}")
         except Exception as e:
-            error_str = str(e)[:80]
-            return False, f"Order API error: {error_str}", 0, 0
+            error_str = str(e)
+            debug_log(f"ORDER POST ERROR: {error_str}")
+            # Check if this is a 403 error
+            if "403" in error_str or "Cloudflare" in error_str.lower():
+                debug_log("!!! 403/CLOUDFLARE ERROR on create_and_post_order !!!")
+                # Log full exception details
+                import traceback
+                debug_log(f"Full traceback: {traceback.format_exc()[:500]}")
+            return False, f"Order API error: {error_str[:80]}", 0, 0
 
         if not response or "orderID" not in response:
             error_msg = response.get("error", "Unknown error") if response else "No response"
@@ -2198,6 +2261,24 @@ def render_sidebar():
         except Exception as e:
             st.error(f"Error: {e}")
             return False  # Signal error occurred
+
+        # DEBUG LOG PANEL
+        st.markdown("""
+        <div style='margin-top: 12px; padding-top: 12px; border-top: 1px solid #1a3025;'>
+            <div style='color: #ff6b6b; font-size: 10px; letter-spacing: 1px; margin-bottom: 8px;'>🔍 DEBUG LOG</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        with st.expander(f"View Logs ({len(st.session_state.debug_log)})", expanded=False):
+            if st.button("Clear Logs", key="clear_debug_logs"):
+                st.session_state.debug_log = []
+                st.rerun()
+
+            if st.session_state.debug_log:
+                log_text = "\n".join(st.session_state.debug_log[:50])
+                st.code(log_text, language="text")
+            else:
+                st.info("No debug logs yet. Try a trade to see logs.")
 
         # Backup download
         backup_data = export_state_json()
