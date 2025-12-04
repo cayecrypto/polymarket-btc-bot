@@ -81,6 +81,20 @@ DARK_THEME_CSS = """
     /* Global Dark Theme */
     .stApp {
         background-color: #0e1117;
+        color: #ffffff;
+    }
+
+    /* Force all text to be white/light */
+    .stApp, .stApp p, .stApp span, .stApp div, .stApp label,
+    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+    .stMarkdown, .stMarkdown p, .stMarkdown span,
+    [data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] p {
+        color: #ffffff !important;
+    }
+
+    /* Caption and secondary text */
+    .stCaption, small, .stApp small {
+        color: #888888 !important;
     }
 
     /* Hide Streamlit branding */
@@ -450,6 +464,58 @@ DARK_THEME_CSS = """
     .stProgress > div > div {
         background: linear-gradient(90deg, #00c853, #69f0ae);
     }
+
+    /* Selectbox and dropdown styling */
+    .stSelectbox > div > div {
+        background: #161a22;
+        border: 1px solid #2d333b;
+        color: #fff;
+    }
+
+    .stSelectbox label {
+        color: #888 !important;
+    }
+
+    /* Dataframe styling */
+    .stDataFrame {
+        background: #161a22;
+    }
+
+    .stDataFrame [data-testid="stDataFrameResizable"] {
+        background: #0e1117;
+    }
+
+    /* File uploader */
+    .stFileUploader {
+        background: #161a22;
+        border: 1px solid #2d333b;
+        border-radius: 8px;
+    }
+
+    .stFileUploader label {
+        color: #888 !important;
+    }
+
+    /* Warning/Info/Error boxes text */
+    .stAlert > div {
+        color: #fff !important;
+    }
+
+    /* Spinner text */
+    .stSpinner > div {
+        color: #fff !important;
+    }
+
+    /* Column headers in dataframe */
+    [data-testid="stDataFrame"] th {
+        background: #161a22 !important;
+        color: #888 !important;
+    }
+
+    [data-testid="stDataFrame"] td {
+        background: #0e1117 !important;
+        color: #fff !important;
+    }
 </style>
 """
 
@@ -508,10 +574,20 @@ MINIMAL_ERC20_ABI = [
         "name": "balanceOf",
         "outputs": [{"name": "balance", "type": "uint256"}],
         "type": "function"
+    },
+    {
+        "constant": True,
+        "inputs": [
+            {"name": "_owner", "type": "address"},
+            {"name": "_spender", "type": "address"}
+        ],
+        "name": "allowance",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "type": "function"
     }
 ]
 
-# ERC1155 ABI for Conditional Tokens (setApprovalForAll)
+# ERC1155 ABI for Conditional Tokens (setApprovalForAll + isApprovedForAll)
 MINIMAL_ERC1155_ABI = [
     {
         "constant": False,
@@ -521,6 +597,16 @@ MINIMAL_ERC1155_ABI = [
         ],
         "name": "setApprovalForAll",
         "outputs": [],
+        "type": "function"
+    },
+    {
+        "constant": True,
+        "inputs": [
+            {"name": "_owner", "type": "address"},
+            {"name": "_operator", "type": "address"}
+        ],
+        "name": "isApprovedForAll",
+        "outputs": [{"name": "", "type": "bool"}],
         "type": "function"
     }
 ]
@@ -783,6 +869,54 @@ def get_matic_balance() -> Optional[float]:
         return float(raw_balance) / 1e18
     except Exception:
         return None
+
+
+def check_existing_approvals() -> bool:
+    """
+    Check if USDC and CT approvals already exist on-chain.
+    Returns True if ALL approvals are already set, False otherwise.
+    This allows skipping the approval step if wallet was already approved.
+    """
+    try:
+        web3 = get_web3()
+        if not web3.is_connected():
+            return False
+
+        wallet_address = get_wallet_address()
+
+        usdc = web3.eth.contract(
+            address=Web3.to_checksum_address(USDC_ADDRESS),
+            abi=MINIMAL_ERC20_ABI
+        )
+        ct = web3.eth.contract(
+            address=Web3.to_checksum_address(CONDITIONAL_TOKENS),
+            abi=MINIMAL_ERC1155_ABI
+        )
+
+        # Check USDC allowances (need > 0 for each exchange contract)
+        min_allowance = 10**18  # At least 1 trillion USDC approved (effectively unlimited)
+        for contract_addr in EXCHANGE_CONTRACTS:
+            allowance = usdc.functions.allowance(
+                wallet_address,
+                Web3.to_checksum_address(contract_addr)
+            ).call()
+            if allowance < min_allowance:
+                return False
+
+        # Check CT approvals (isApprovedForAll must be True)
+        for contract_addr in EXCHANGE_CONTRACTS:
+            is_approved = ct.functions.isApprovedForAll(
+                wallet_address,
+                Web3.to_checksum_address(contract_addr)
+            ).call()
+            if not is_approved:
+                return False
+
+        # All approvals exist!
+        return True
+
+    except Exception:
+        return False
 
 
 def approve_all_contracts() -> bool:
@@ -2138,7 +2272,15 @@ def main():
 
     state = st.session_state.state
 
-    # Setup check
+    # Check if approvals already exist on-chain (auto-detect)
+    if not state.get("allowance_approved", False):
+        # Check on-chain if wallet already has approvals
+        with st.spinner("Checking existing approvals..."):
+            if check_existing_approvals():
+                st.session_state.state["allowance_approved"] = True
+                st.rerun()
+
+    # Setup check - only show if approvals don't exist on-chain
     if not state.get("allowance_approved", False):
         st.warning("First-time setup required: Approve token spending")
 
