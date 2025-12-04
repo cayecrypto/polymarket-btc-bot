@@ -516,6 +516,24 @@ DARK_THEME_CSS = """
         background: #0e1117 !important;
         color: #fff !important;
     }
+
+    /* Binance price ticker */
+    .binance-ticker {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.85em;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+
+    .binance-up {
+        color: #00c853;
+    }
+
+    .binance-down {
+        color: #ff5252;
+    }
 </style>
 """
 
@@ -544,6 +562,14 @@ EXCHANGE_CONTRACTS = [
 
 # Supported coins for Up/Down markets
 SLUG_COINS = ["btc", "eth", "sol", "xrp"]
+
+# Coin to Binance symbol mapping
+COIN_TO_BINANCE = {
+    "BTC": "BTCUSDT",
+    "ETH": "ETHUSDT",
+    "SOL": "SOLUSDT",
+    "XRP": "XRPUSDT"
+}
 
 # Trading safety parameters
 MAX_IMBALANCE = 500          # Max allowed share imbalance
@@ -651,6 +677,69 @@ if 'wallet_connected' not in st.session_state:
     st.session_state.private_key = ""
     st.session_state.rpc_url = "https://polygon-rpc.com"
 
+if 'binance_data' not in st.session_state:
+    st.session_state.binance_data = {}
+
+# =============================================================================
+# BINANCE PRICE DATA
+# =============================================================================
+
+def get_binance_data() -> Dict[str, Dict]:
+    """
+    Fetch live prices from Binance for all supported coins.
+    Returns dict: {symbol: {"price": float, "change": float}}
+    """
+    symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"]
+    data = {}
+
+    for sym in symbols:
+        try:
+            r = requests.get(
+                f"https://api.binance.com/api/v3/ticker/24hr?symbol={sym}",
+                timeout=5
+            )
+            if r.status_code == 200:
+                j = r.json()
+                data[sym] = {
+                    "price": float(j.get("lastPrice", 0)),
+                    "change": float(j.get("priceChangePercent", 0))
+                }
+            else:
+                data[sym] = {"price": 0.0, "change": 0.0}
+        except Exception:
+            data[sym] = {"price": 0.0, "change": 0.0}
+
+    return data
+
+
+def format_binance_price(coin: str, binance_data: Dict) -> str:
+    """Format Binance price with change indicator for display."""
+    symbol = COIN_TO_BINANCE.get(coin, "")
+    if not symbol or symbol not in binance_data:
+        return ""
+
+    info = binance_data[symbol]
+    price = info.get("price", 0)
+    change = info.get("change", 0)
+
+    if price == 0:
+        return ""
+
+    # Format price based on magnitude
+    if price >= 1000:
+        price_str = f"${price:,.2f}"
+    elif price >= 1:
+        price_str = f"${price:.2f}"
+    else:
+        price_str = f"${price:.4f}"
+
+    # Color based on change
+    change_color = "#00c853" if change >= 0 else "#ff5252"
+    change_sign = "+" if change >= 0 else ""
+
+    return f"""<span style='color: {change_color}; font-weight: 600;'>{price_str} <span style='font-size: 0.85em;'>({change_sign}{change:.2f}%)</span></span>"""
+
+
 # =============================================================================
 # PLOTLY CHART FUNCTIONS
 # =============================================================================
@@ -658,7 +747,6 @@ if 'wallet_connected' not in st.session_state:
 def create_equity_curve(equity_history: List[Dict], height: int = 300) -> go.Figure:
     """Create professional dark-themed equity curve."""
     if not equity_history:
-        # Empty chart with message
         fig = go.Figure()
         fig.add_annotation(
             text="No trading data yet",
@@ -671,7 +759,6 @@ def create_equity_curve(equity_history: List[Dict], height: int = 300) -> go.Fig
         times = [e.get("timestamp", "") for e in equity_history]
         values = [e.get("total_profit", 0) for e in equity_history]
 
-        # Determine line color based on final value
         line_color = "#00c853" if values[-1] >= 0 else "#ff5252"
         fill_color = "rgba(0, 200, 83, 0.1)" if values[-1] >= 0 else "rgba(255, 82, 82, 0.1)"
 
@@ -744,16 +831,12 @@ def create_mini_sparkline(equity_history: List[Dict], width: int = 200, height: 
 
 def create_pair_cost_gauge(pair_cost: float) -> go.Figure:
     """Create circular gauge for pair cost visualization."""
-    # Determine color
     if pair_cost < 0.98:
         color = "#00c853"
-        status = "GOOD"
     elif pair_cost <= 0.985:
         color = "#ffc107"
-        status = "MARGINAL"
     else:
         color = "#ff5252"
-        status = "AVOID"
 
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
@@ -793,7 +876,6 @@ def create_pnl_bar_chart(trades: List[Dict], height: int = 200) -> go.Figure:
     fig = go.Figure()
 
     if trades:
-        # Extract profit data
         profits = []
         labels = []
         colors = []
@@ -875,7 +957,6 @@ def check_existing_approvals() -> bool:
     """
     Check if USDC and CT approvals already exist on-chain.
     Returns True if ALL approvals are already set, False otherwise.
-    This allows skipping the approval step if wallet was already approved.
     """
     try:
         web3 = get_web3()
@@ -893,8 +974,7 @@ def check_existing_approvals() -> bool:
             abi=MINIMAL_ERC1155_ABI
         )
 
-        # Check USDC allowances (need > 0 for each exchange contract)
-        min_allowance = 10**18  # At least 1 trillion USDC approved (effectively unlimited)
+        min_allowance = 10**18
         for contract_addr in EXCHANGE_CONTRACTS:
             allowance = usdc.functions.allowance(
                 wallet_address,
@@ -903,7 +983,6 @@ def check_existing_approvals() -> bool:
             if allowance < min_allowance:
                 return False
 
-        # Check CT approvals (isApprovedForAll must be True)
         for contract_addr in EXCHANGE_CONTRACTS:
             is_approved = ct.functions.isApprovedForAll(
                 wallet_address,
@@ -912,7 +991,6 @@ def check_existing_approvals() -> bool:
             if not is_approved:
                 return False
 
-        # All approvals exist!
         return True
 
     except Exception:
@@ -946,7 +1024,6 @@ def approve_all_contracts() -> bool:
         progress = st.progress(0)
         status = st.empty()
 
-        # USDC approvals
         for i, contract_addr in enumerate(EXCHANGE_CONTRACTS):
             status.info(f"Approving USDC for contract {i+1}/3...")
             nonce = web3.eth.get_transaction_count(wallet_address)
@@ -966,7 +1043,6 @@ def approve_all_contracts() -> bool:
             progress.progress((i + 1) / 6)
             time.sleep(1)
 
-        # CT approvals
         for i, contract_addr in enumerate(EXCHANGE_CONTRACTS):
             status.info(f"Approving CT for contract {i+1}/3...")
             nonce = web3.eth.get_transaction_count(wallet_address)
@@ -1023,7 +1099,7 @@ def get_clob_client() -> Optional[ClobClient]:
 
 
 # =============================================================================
-# MARKET DETECTION - GAMMA API
+# MARKET DETECTION - GAMMA API WITH LIVE PRICES FROM TOKENS
 # =============================================================================
 
 def get_current_15m_timestamp() -> int:
@@ -1032,7 +1108,7 @@ def get_current_15m_timestamp() -> int:
 
 
 def fetch_market_by_slug(slug: str) -> Optional[Dict]:
-    """Fetch a specific market from Gamma API by slug."""
+    """Fetch a specific market from Gamma API by slug with token prices."""
     try:
         response = requests.get(
             f"{GAMMA_API_HOST}/markets?slug={slug}",
@@ -1050,7 +1126,11 @@ def fetch_market_by_slug(slug: str) -> Optional[Dict]:
 
 
 def find_active_market_for_coin(coin: str) -> Optional[Dict]:
-    """Find active market for a specific coin."""
+    """
+    Find active market for a specific coin.
+    CRITICAL: Extract prices from the tokens array, NOT from outcomePrices.
+    The tokens array contains live prices directly from Gamma API.
+    """
     current_ts = get_current_15m_timestamp()
     timestamps_to_check = [current_ts, current_ts + 900, current_ts - 900]
 
@@ -1059,7 +1139,7 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
         market = fetch_market_by_slug(slug)
 
         if market:
-            # Parse JSON string fields
+            # Parse token IDs
             token_ids_raw = market.get("clobTokenIds", [])
             if isinstance(token_ids_raw, str):
                 try:
@@ -1069,6 +1149,7 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
             else:
                 token_ids = token_ids_raw
 
+            # Parse outcomes
             outcomes_raw = market.get("outcomes", ["Up", "Down"])
             if isinstance(outcomes_raw, str):
                 try:
@@ -1078,14 +1159,59 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
             else:
                 outcomes = outcomes_raw
 
-            prices_raw = market.get("outcomePrices", ["0.5", "0.5"])
-            if isinstance(prices_raw, str):
-                try:
-                    prices = json.loads(prices_raw)
-                except:
-                    prices = ["0.5", "0.5"]
-            else:
-                prices = prices_raw
+            # ============================================================
+            # CRITICAL FIX: Get prices from TOKENS array, not outcomePrices
+            # The tokens array has live prices that update in real-time
+            # ============================================================
+            tokens = market.get("tokens", [])
+
+            # Default prices
+            up_price = 0.5
+            down_price = 0.5
+
+            if tokens and len(tokens) >= 2:
+                # Tokens array contains objects with "outcome" and "price" fields
+                for token in tokens:
+                    token_outcome = str(token.get("outcome", "")).lower()
+                    token_price = token.get("price")
+
+                    if token_price is not None:
+                        try:
+                            price_val = float(token_price)
+                            if token_outcome == "up":
+                                up_price = price_val
+                            elif token_outcome == "down":
+                                down_price = price_val
+                        except (ValueError, TypeError):
+                            pass
+
+            # Fallback to outcomePrices if tokens didn't work
+            if up_price == 0.5 and down_price == 0.5:
+                prices_raw = market.get("outcomePrices", ["0.5", "0.5"])
+                if isinstance(prices_raw, str):
+                    try:
+                        prices = json.loads(prices_raw)
+                    except:
+                        prices = ["0.5", "0.5"]
+                else:
+                    prices = prices_raw
+
+                if len(token_ids) >= 2 and len(outcomes) >= 2:
+                    up_idx, down_idx = 0, 1
+                    for i, outcome in enumerate(outcomes):
+                        if str(outcome).lower() == "up":
+                            up_idx = i
+                        elif str(outcome).lower() == "down":
+                            down_idx = i
+
+                    try:
+                        up_price = float(prices[up_idx]) if len(prices) > up_idx else 0.5
+                    except:
+                        up_price = 0.5
+                    try:
+                        down_price = float(prices[down_idx]) if len(prices) > down_idx else 0.5
+                    except:
+                        down_price = 0.5
 
             if len(token_ids) >= 2 and len(outcomes) >= 2:
                 up_idx, down_idx = 0, 1
@@ -1106,15 +1232,6 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
                     except:
                         end_time = None
 
-                try:
-                    up_price = float(prices[up_idx]) if len(prices) > up_idx else 0.5
-                except:
-                    up_price = 0.5
-                try:
-                    down_price = float(prices[down_idx]) if len(prices) > down_idx else 0.5
-                except:
-                    down_price = 0.5
-
                 return {
                     "condition_id": market.get("conditionId"),
                     "coin": coin.upper(),
@@ -1132,7 +1249,7 @@ def find_active_market_for_coin(coin: str) -> Optional[Dict]:
 
 
 def find_all_active_updown_markets() -> List[Dict]:
-    """Find all active 15-min Up/Down markets."""
+    """Find all active 15-min Up/Down markets with live prices."""
     all_markets = []
 
     for coin in SLUG_COINS:
@@ -1239,7 +1356,6 @@ def archive_old_markets(active_condition_ids: List[str]):
                         "locked_profit": round(locked_profit, 2)
                     })
 
-                    # Update equity history
                     total_profit = get_total_locked_profit() + get_total_history_profit()
                     st.session_state.state["equity_history"].append({
                         "timestamp": datetime.now(ET).strftime("%H:%M:%S"),
@@ -1261,24 +1377,18 @@ def archive_old_markets(active_condition_ids: List[str]):
 
 
 # =============================================================================
-# TRADING FUNCTIONS
+# TRADING FUNCTIONS - USE MARKET PRICES, NOT client.get_midpoint
 # =============================================================================
 
-def get_prices(client: ClobClient, up_token_id: str, down_token_id: str) -> Tuple[float, float, float, float]:
-    """Get mid prices and ask prices for both tokens."""
+def get_order_book_ask(client: ClobClient, token_id: str) -> float:
+    """Get best ask price from order book for execution."""
     try:
-        mid_up = client.get_midpoint(up_token_id)
-        mid_down = client.get_midpoint(down_token_id)
-
-        ob_up = client.get_order_book(up_token_id)
-        ob_down = client.get_order_book(down_token_id)
-
-        ask_up = float(ob_up.asks[0].price) if ob_up.asks else 0.99
-        ask_down = float(ob_down.asks[0].price) if ob_down.asks else 0.99
-
-        return float(mid_up), float(mid_down), ask_up, ask_down
+        ob = client.get_order_book(token_id)
+        if ob.asks:
+            return float(ob.asks[0].price)
+        return 0.99
     except Exception:
-        return 0.50, 0.50, 0.50, 0.50
+        return 0.99
 
 
 def check_safety(mstate: Dict, side: str, seconds_remaining: int) -> Tuple[bool, str]:
@@ -1377,7 +1487,6 @@ def execute_market_buy(
 
         actual_cost = filled_size * exec_price
 
-        # Update trade log
         trade_record = {
             "time": datetime.now(ET).strftime("%H:%M:%S"),
             "coin": coin,
@@ -1392,11 +1501,9 @@ def execute_market_buy(
         mstate["trade_log"].insert(0, trade_record)
         mstate["trade_log"] = mstate["trade_log"][:50]
 
-        # Global trade log
         st.session_state.state["trade_log"].insert(0, trade_record)
         st.session_state.state["trade_log"] = st.session_state.state["trade_log"][:200]
 
-        # Update position
         if side == "up":
             mstate["shares_up"] = mstate.get("shares_up", 0.0) + filled_size
             mstate["spent_up"] = mstate.get("spent_up", 0.0) + actual_cost
@@ -1404,10 +1511,8 @@ def execute_market_buy(
             mstate["shares_down"] = mstate.get("shares_down", 0.0) + filled_size
             mstate["spent_down"] = mstate.get("spent_down", 0.0) + actual_cost
 
-        # Update stats
         st.session_state.state["total_trades"] = st.session_state.state.get("total_trades", 0) + 1
 
-        # Update equity history
         total_profit = get_total_locked_profit() + get_total_history_profit()
         st.session_state.state["equity_history"].append({
             "timestamp": datetime.now(ET).strftime("%H:%M:%S"),
@@ -1507,15 +1612,12 @@ def calculate_session_stats() -> Dict[str, Any]:
     history = state.get("history", [])
     trade_log = state.get("trade_log", [])
 
-    # Calculate various stats
     total_profit = get_total_locked_profit() + get_total_history_profit()
 
-    # Win rate (profitable markets)
     winning_markets = sum(1 for h in history if h.get("locked_profit", 0) > 0)
     total_markets = len(history)
     win_rate = (winning_markets / total_markets * 100) if total_markets > 0 else 0
 
-    # Average pair cost
     avg_pair_costs = []
     for mstate in state.get("markets", {}).values():
         m = calculate_metrics(mstate)
@@ -1523,15 +1625,12 @@ def calculate_session_stats() -> Dict[str, Any]:
             avg_pair_costs.append(m["avg_pair_cost"])
     avg_pair_cost = sum(avg_pair_costs) / len(avg_pair_costs) if avg_pair_costs else 0
 
-    # Best/worst market
     profits = [h.get("locked_profit", 0) for h in history]
     best_profit = max(profits) if profits else 0
     worst_profit = min(profits) if profits else 0
 
-    # Total volume
     total_volume = sum(t.get("usdc", 0) for t in trade_log)
 
-    # Max drawdown (approximation)
     equity = state.get("equity_history", [])
     if equity:
         peak = 0
@@ -1584,7 +1683,6 @@ def import_state_json(json_str: str) -> bool:
 def render_sidebar():
     """Render professional sidebar with wallet and controls."""
 
-    # Wallet section
     st.sidebar.markdown("""
     <div style='text-align: center; padding: 10px 0;'>
         <span style='font-size: 1.5em;'>💎</span>
@@ -1625,7 +1723,6 @@ def render_sidebar():
         st.sidebar.caption("gabagool style - Dec 2025")
         st.stop()
 
-    # Connected wallet info
     try:
         wallet_addr = get_wallet_address()
         st.sidebar.markdown(f"""
@@ -1638,7 +1735,6 @@ def render_sidebar():
         st.sidebar.error("Invalid key")
         st.stop()
 
-    # Balances
     st.sidebar.markdown("#### Balances")
 
     col1, col2 = st.sidebar.columns(2)
@@ -1670,10 +1766,8 @@ def render_sidebar():
 
     st.sidebar.markdown("---")
 
-    # Backup/Restore
     st.sidebar.markdown("#### Data Management")
 
-    # Download backup
     backup_data = export_state_json()
     b64 = base64.b64encode(backup_data.encode()).decode()
     filename = f"polymarket_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -1687,7 +1781,6 @@ def render_sidebar():
     </a>
     """, unsafe_allow_html=True)
 
-    # Upload restore
     uploaded_file = st.sidebar.file_uploader("Restore Backup", type="json", label_visibility="collapsed")
     if uploaded_file:
         content = uploaded_file.read().decode()
@@ -1698,7 +1791,6 @@ def render_sidebar():
 
     st.sidebar.markdown("---")
 
-    # Disconnect
     if st.sidebar.button("Disconnect", use_container_width=True):
         st.session_state.wallet_connected = False
         st.session_state.private_key = ""
@@ -1711,15 +1803,22 @@ def render_sidebar():
 
 
 # =============================================================================
-# HEADER BAR
+# HEADER BAR WITH BINANCE PRICES
 # =============================================================================
 
-def render_header():
-    """Render professional fixed header with stats."""
+def render_header(binance_data: Dict):
+    """Render professional fixed header with stats and Binance prices."""
     stats = calculate_session_stats()
     total_profit = stats["total_profit"]
     profit_class = "profit-positive" if total_profit >= 0 else "profit-negative"
     profit_sign = "+" if total_profit >= 0 else ""
+
+    # Build Binance ticker string
+    ticker_html = ""
+    for coin in ["BTC", "ETH", "SOL", "XRP"]:
+        price_html = format_binance_price(coin, binance_data)
+        if price_html:
+            ticker_html += f"<span style='margin-right: 20px;'><span style='color: #888;'>{coin}:</span> {price_html}</span>"
 
     st.markdown(f"""
     <div style='background: linear-gradient(180deg, #161a22 0%, #0e1117 100%);
@@ -1732,7 +1831,7 @@ def render_header():
                     POLYMARKET 15-MIN COMBO PRINTER
                 </div>
                 <div style='color: #888; font-size: 0.85em; letter-spacing: 1px; margin-top: 5px;'>
-                    BTC • ETH • SOL • XRP — GABAGOOL STYLE
+                    {ticker_html if ticker_html else "BTC • ETH • SOL • XRP — GABAGOOL STYLE"}
                 </div>
             </div>
             <div style='display: flex; gap: 40px; align-items: center;'>
@@ -1773,13 +1872,12 @@ def render_header():
 
 
 # =============================================================================
-# DASHBOARD TAB
+# DASHBOARD TAB WITH BINANCE PRICES
 # =============================================================================
 
-def render_dashboard_tab(all_markets: List[Dict], client: ClobClient):
+def render_dashboard_tab(all_markets: List[Dict], client: ClobClient, binance_data: Dict):
     """Render main dashboard with overview of all markets."""
 
-    # Market cards row
     st.markdown("### Market Overview")
 
     cols = st.columns(4)
@@ -1789,24 +1887,20 @@ def render_dashboard_tab(all_markets: List[Dict], client: ClobClient):
         is_active = market.get("active", False)
 
         with cols[i]:
-            # Get prices if active
-            if is_active and client:
-                try:
-                    mid_up, mid_down, _, _ = get_prices(client, market["up_token_id"], market["down_token_id"])
-                    pair_cost = mid_up + mid_down
-                except:
-                    pair_cost = 0.99
+            # Use prices from market dict (from Gamma API tokens), NOT client.get_midpoint
+            if is_active:
+                up_price = market.get("up_price", 0.5)
+                down_price = market.get("down_price", 0.5)
+                pair_cost = up_price + down_price
             else:
                 pair_cost = 0
 
-            # Get position if exists
             if is_active and market.get("condition_id"):
                 mstate = get_market_state(market["condition_id"], coin)
                 metrics = calculate_metrics(mstate)
             else:
                 metrics = {"locked_profit": 0, "locked_shares": 0}
 
-            # Determine colors
             coin_colors = {"BTC": "#f7931a", "ETH": "#627eea", "SOL": "#00ffa3", "XRP": "#888"}
             coin_color = coin_colors.get(coin, "#888")
 
@@ -1819,12 +1913,16 @@ def render_dashboard_tab(all_markets: List[Dict], client: ClobClient):
             profit_color = "#00c853" if profit >= 0 else "#ff5252"
             profit_sign = "+" if profit >= 0 else ""
 
+            # Binance price for this coin
+            binance_html = format_binance_price(coin, binance_data)
+
             st.markdown(f"""
             <div style='background: linear-gradient(145deg, #161a22, #1a1f2a);
                         border: 1px solid #2d333b; border-left: 4px solid {status_color};
                         border-radius: 12px; padding: 20px; text-align: center;
                         transition: all 0.3s ease;'>
                 <div style='color: {coin_color}; font-size: 2.2em; font-weight: 800;'>{coin}</div>
+                <div style='font-size: 0.9em; margin: 5px 0;'>{binance_html if binance_html else ""}</div>
                 <div style='color: {status_color}; font-size: 0.8em; font-weight: 600;
                             letter-spacing: 2px; margin: 5px 0;'>{status_text}</div>
                 {"<div style='color: " + pair_cost_color + "; font-size: 1.8em; font-weight: 700; margin: 15px 0;'>$" + f"{pair_cost:.4f}" + "</div>" if is_active else "<div style='color: #888; font-size: 1.2em; margin: 15px 0;'>---</div>"}
@@ -1840,7 +1938,6 @@ def render_dashboard_tab(all_markets: List[Dict], client: ClobClient):
 
     st.markdown("---")
 
-    # Equity curve
     col1, col2 = st.columns([2, 1])
 
     with col1:
@@ -1878,7 +1975,6 @@ def render_dashboard_tab(all_markets: List[Dict], client: ClobClient):
         </div>
         """, unsafe_allow_html=True)
 
-    # Recent trades
     st.markdown("### Recent Trades")
     trade_log = st.session_state.state.get("trade_log", [])[:10]
 
@@ -1890,10 +1986,10 @@ def render_dashboard_tab(all_markets: List[Dict], client: ClobClient):
 
 
 # =============================================================================
-# MARKET TAB UI
+# MARKET TAB UI WITH LIVE PRICES FROM GAMMA API
 # =============================================================================
 
-def render_market_tab(market: Dict, client: ClobClient):
+def render_market_tab(market: Dict, client: ClobClient, binance_data: Dict):
     """Render full trading interface for a single market."""
     coin = market["coin"]
 
@@ -1924,11 +2020,16 @@ def render_market_tab(market: Dict, client: ClobClient):
     mstate = get_market_state(condition_id, coin)
     seconds_remaining = get_seconds_remaining(market.get("end_time"))
 
-    # Header row: Question + Countdown
+    # Binance price display
+    binance_html = format_binance_price(coin, binance_data)
+
+    # Header row: Question + Countdown + Binance Price
     col1, col2 = st.columns([3, 1])
 
     with col1:
         st.markdown(f"**{market['question']}**")
+        if binance_html:
+            st.markdown(f"<div style='margin-top: 5px;'>Binance: {binance_html}</div>", unsafe_allow_html=True)
 
     with col2:
         if seconds_remaining < 999:
@@ -1952,9 +2053,16 @@ def render_market_tab(market: Dict, client: ClobClient):
 
     st.markdown("---")
 
-    # Get prices
-    mid_up, mid_down, ask_up, ask_down = get_prices(client, market["up_token_id"], market["down_token_id"])
+    # ==========================================================================
+    # CRITICAL: Use prices from market dict (Gamma API tokens), NOT get_midpoint
+    # ==========================================================================
+    mid_up = market.get("up_price", 0.5)
+    mid_down = market.get("down_price", 0.5)
     pair_cost = mid_up + mid_down
+
+    # Get ask prices from order book for execution display
+    ask_up = get_order_book_ask(client, market["up_token_id"])
+    ask_down = get_order_book_ask(client, market["down_token_id"])
 
     # Pair cost display
     if pair_cost < 0.98:
@@ -2107,7 +2215,6 @@ def render_journal_tab():
         st.info("No trades recorded yet. Start trading to build your journal.")
         return
 
-    # Filters
     col1, col2, col3 = st.columns([1, 1, 2])
 
     with col1:
@@ -2116,14 +2223,12 @@ def render_journal_tab():
     with col2:
         side_filter = st.selectbox("Filter by Side", ["All", "UP", "DOWN"])
 
-    # Filter trades
     filtered = trade_log
     if coin_filter != "All":
         filtered = [t for t in filtered if t.get("coin") == coin_filter]
     if side_filter != "All":
         filtered = [t for t in filtered if t.get("side") == side_filter]
 
-    # Stats summary
     total_volume = sum(t.get("usdc", 0) for t in filtered)
     avg_price = sum(t.get("price", 0) for t in filtered) / len(filtered) if filtered else 0
 
@@ -2135,12 +2240,10 @@ def render_journal_tab():
 
     st.markdown("---")
 
-    # Trade table
     if filtered:
         df = pd.DataFrame(filtered)
         st.dataframe(df, use_container_width=True, hide_index=True, height=500)
 
-        # Export button
         csv = df.to_csv(index=False)
         b64 = base64.b64encode(csv.encode()).decode()
         filename = f"trade_journal_{datetime.now().strftime('%Y%m%d')}.csv"
@@ -2167,7 +2270,6 @@ def render_stats_tab():
 
     stats = calculate_session_stats()
 
-    # Top stats row
     col1, col2, col3, col4, col5 = st.columns(5)
 
     profit_color = "#00c853" if stats["total_profit"] >= 0 else "#ff5252"
@@ -2215,7 +2317,6 @@ def render_stats_tab():
 
     st.markdown("---")
 
-    # Equity curve (larger)
     st.markdown("### Equity Curve")
     equity_history = st.session_state.state.get("equity_history", [])
     fig = create_equity_curve(equity_history, height=400)
@@ -2223,7 +2324,6 @@ def render_stats_tab():
 
     st.markdown("---")
 
-    # Market history
     st.markdown("### Completed Markets")
 
     history = st.session_state.state.get("history", [])
@@ -2236,7 +2336,6 @@ def render_stats_tab():
 
     st.markdown("---")
 
-    # Session info
     st.markdown("### Session Info")
 
     session_start = st.session_state.state.get("session_start", "Unknown")
@@ -2274,7 +2373,6 @@ def main():
 
     # Check if approvals already exist on-chain (auto-detect)
     if not state.get("allowance_approved", False):
-        # Check on-chain if wallet already has approvals
         with st.spinner("Checking existing approvals..."):
             if check_existing_approvals():
                 st.session_state.state["allowance_approved"] = True
@@ -2299,10 +2397,14 @@ def main():
         st.error("Failed to initialize trading client.")
         st.stop()
 
-    # Render header
-    render_header()
+    # Fetch Binance data every refresh
+    binance_data = get_binance_data()
+    st.session_state.binance_data = binance_data
 
-    # Get all markets
+    # Render header with Binance prices
+    render_header(binance_data)
+
+    # Get all markets with live prices from Gamma API tokens
     all_markets = find_all_active_updown_markets()
 
     # Archive old markets
@@ -2320,12 +2422,12 @@ def main():
 
     # Dashboard tab
     with tabs[0]:
-        render_dashboard_tab(all_markets, client)
+        render_dashboard_tab(all_markets, client, binance_data)
 
     # Market tabs
     for i, market in enumerate(all_markets):
         with tabs[i + 1]:
-            render_market_tab(market, client)
+            render_market_tab(market, client, binance_data)
 
     # Journal tab
     with tabs[-2]:
