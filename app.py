@@ -97,10 +97,13 @@ DARK_THEME_CSS = """
         color: #888888 !important;
     }
 
-    /* Hide Streamlit branding */
+    /* Hide Streamlit branding - but keep essential UI */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+    /* Keep header visible for sidebar toggle */
+    header[data-testid="stHeader"] {
+        background-color: #0e1117 !important;
+    }
 
     /* Main container */
     .main .block-container {
@@ -533,6 +536,39 @@ DARK_THEME_CSS = """
 
     .binance-down {
         color: #ff5252;
+    }
+
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background-color: #0e1117 !important;
+        border-right: 1px solid #2d333b !important;
+    }
+
+    [data-testid="stSidebar"] * {
+        color: #ffffff !important;
+    }
+
+    [data-testid="stSidebar"] input {
+        background-color: #161a22 !important;
+        color: #ffffff !important;
+        border: 1px solid #2d333b !important;
+    }
+
+    [data-testid="stSidebar"] .stButton button {
+        background-color: #00c853 !important;
+        color: #000 !important;
+        font-weight: bold !important;
+    }
+
+    /* Ensure text inputs are visible */
+    .stTextInput input {
+        background-color: #161a22 !important;
+        color: #ffffff !important;
+        border: 1px solid #2d333b !important;
+    }
+
+    .stTextInput label {
+        color: #ffffff !important;
     }
 </style>
 """
