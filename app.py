@@ -1837,19 +1837,23 @@ def run_auto_mode_cycle(markets: List[Dict], client: ClobClient) -> List[str]:
                 success, msg, cost = execute_auto_trade(trade_info, market, mstate, client)
                 messages.append(msg)
 
+                # ALWAYS update cooldown after any trade attempt (success or failure)
+                st.session_state.last_auto_trade_time = time.time()
+
                 if success:
-                    # Update cooldown timer
-                    st.session_state.last_auto_trade_time = time.time()
                     # Update available capital
                     available_usdc -= cost
-                    # Only one trade per cycle to avoid rate limits
-                    break
+
+                # ALWAYS break after one trade attempt - max 1 per cycle
+                break
 
             except Exception as e:
+                # Update cooldown on exception too
+                st.session_state.last_auto_trade_time = time.time()
                 error_msg = str(e)
                 if "403" in error_msg or "rate" in error_msg.lower():
-                    # Rate limited - back off
-                    st.session_state.last_auto_trade_time = time.time() + 30  # Extra 30s cooldown
+                    # Rate limited - back off extra
+                    st.session_state.last_auto_trade_time = time.time() + 30
                     messages.append("AUTO: Rate limited, backing off...")
                 else:
                     messages.append(f"AUTO: Error - {error_msg[:50]}")
