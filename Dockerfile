@@ -9,11 +9,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app files
 COPY . .
 
-# Railway sets PORT env var dynamically
-ENV PORT=8080
+# Make startup script executable
+RUN chmod +x start.sh
 
-# Expose the port
-EXPOSE ${PORT}
-
-# Use exec form with shell wrapper to properly expand PORT
-CMD ["sh", "-c", "streamlit run app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false"]
+# Railway injects PORT at runtime - start.sh reads it
+CMD ["./start.sh"]
