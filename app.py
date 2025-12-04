@@ -1248,43 +1248,20 @@ def get_clob_client() -> Optional[ClobClient]:
         api_passphrase = os.environ.get("POLYMARKET_API_PASSPHRASE")
 
         if api_key and api_secret and api_passphrase:
-            # Use official API credentials (no Cloudflare issues)
-            # Create ApiCreds object with the official credentials
+            # FINAL FIX: Use official API credentials ONLY - no private key!
+            # This bypasses Cloudflare completely by not triggering any signing
             creds = ApiCreds(
                 api_key=api_key,
                 api_secret=api_secret,
                 api_passphrase=api_passphrase
             )
-            # Need private key to initialize client, then set creds
-            env_private_key = os.environ.get("POLYMARKET_PRIVATE_KEY")
-            if env_private_key:
-                pk = env_private_key.strip()
-                if not pk.startswith("0x"):
-                    pk = "0x" + pk
-                # Get wallet address for funder parameter
-                wallet_account = Account.from_key(pk)
-                funder_address = wallet_account.address
-
-                # signature_type=2 for browser proxy wallets (Polymarket website API keys)
-                client = ClobClient(
-                    host=CLOB_HOST,
-                    key=pk,
-                    chain_id=CHAIN_ID,
-                    signature_type=2,
-                    funder=funder_address
-                )
-                # CRITICAL: Must call set_api_creds() to activate credentials
-                # The creds parameter in constructor is IGNORED by py-clob-client
-                client.set_api_creds(creds)
-            else:
-                # No private key - create client with just creds
-                client = ClobClient(
-                    host=CLOB_HOST,
-                    chain_id=CHAIN_ID,
-                    signature_type=2
-                )
-                # CRITICAL: Must call set_api_creds() to activate credentials
-                client.set_api_creds(creds)
+            # Create client with ONLY chain_id - NO private key, NO signature_type
+            # The API credentials handle all authentication
+            client = ClobClient(
+                host=CLOB_HOST,
+                chain_id=CHAIN_ID
+            )
+            client.set_api_creds(creds)
             st.session_state.client = client
             st.session_state.api_cred_status = "official API"
             return client
