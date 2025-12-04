@@ -790,6 +790,7 @@ MAX_TRADE_PCT = 0.12              # Max 12% of free capital per trade
 MIN_TRADE_USD = 2                 # Minimum trade size (lowered for testing with small bankrolls)
 MAX_TRADE_USD = 100               # Maximum trade size
 MIN_TIME_REMAINING = 90           # Don't trade with less than 90s remaining
+AUTO_TRADE_COOLDOWN = 10          # Minimum seconds between auto trades (rate limit)
 
 ET = pytz.timezone("US/Eastern")
 
@@ -899,6 +900,9 @@ if 'auto_mode' not in st.session_state:
 
 if 'auto_log' not in st.session_state:
     st.session_state.auto_log = []  # Last 30 auto trades
+
+if 'last_auto_trade_time' not in st.session_state:
+    st.session_state.last_auto_trade_time = 0  # Unix timestamp of last auto trade
 
 if 'button_mode' not in st.session_state:
     st.session_state.button_mode = "percent"  # "percent" or "dollar"
@@ -1773,6 +1777,12 @@ def run_auto_mode_cycle(markets: List[Dict], client: ClobClient) -> List[str]:
     if not st.session_state.auto_mode:
         return []
 
+    # Rate limit: check cooldown since last trade
+    current_time = time.time()
+    time_since_last = current_time - st.session_state.last_auto_trade_time
+    if time_since_last < AUTO_TRADE_COOLDOWN:
+        return []  # Still in cooldown, skip this cycle
+
     messages = []
 
     # Get available capital
@@ -1797,16 +1807,28 @@ def run_auto_mode_cycle(markets: List[Dict], client: ClobClient) -> List[str]:
         trade_info = evaluate_auto_trade(market, mstate, available_usdc)
 
         if trade_info:
-            # Execute the trade
-            success, msg, cost = execute_auto_trade(trade_info, market, mstate, client)
-            messages.append(msg)
+            try:
+                # Execute the trade
+                success, msg, cost = execute_auto_trade(trade_info, market, mstate, client)
+                messages.append(msg)
 
-            if success:
-                # Update available capital
-                available_usdc -= cost
+                if success:
+                    # Update cooldown timer
+                    st.session_state.last_auto_trade_time = time.time()
+                    # Update available capital
+                    available_usdc -= cost
+                    # Only one trade per cycle to avoid rate limits
+                    break
 
-                # Small delay between trades
-                time.sleep(0.5)
+            except Exception as e:
+                error_msg = str(e)
+                if "403" in error_msg or "rate" in error_msg.lower():
+                    # Rate limited - back off
+                    st.session_state.last_auto_trade_time = time.time() + 30  # Extra 30s cooldown
+                    messages.append("AUTO: Rate limited, backing off...")
+                else:
+                    messages.append(f"AUTO: Error - {error_msg[:50]}")
+                break  # Stop trying on error
 
     return messages
 
