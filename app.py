@@ -777,6 +777,7 @@ WARN_IMBALANCE = 400
 NO_TRADE_SECONDS = 90
 PRICE_SLIPPAGE = 0.006
 BUY_AMOUNTS = [10, 25, 50, 100]
+BUY_PERCENTAGES = [5, 10, 25, 50]  # Percentage of available bankroll
 REFRESH_INTERVAL = 2  # Fast polling for live prices
 
 # =============================================================================
@@ -898,6 +899,9 @@ if 'auto_mode' not in st.session_state:
 
 if 'auto_log' not in st.session_state:
     st.session_state.auto_log = []  # Last 30 auto trades
+
+if 'button_mode' not in st.session_state:
+    st.session_state.button_mode = "percent"  # "percent" or "dollar"
 
 # =============================================================================
 # BINANCE PRICE DATA
@@ -2052,6 +2056,25 @@ def render_sidebar():
             </div>
             """, unsafe_allow_html=True)
 
+            # Trade button mode toggle
+            st.markdown("""
+            <div style='margin-top: 12px; padding-top: 12px; border-top: 1px solid #1a3025;'>
+                <div style='color: #5a8a6a; font-size: 10px; letter-spacing: 1px; margin-bottom: 8px;'>TRADE BUTTONS</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            button_mode = st.radio(
+                "Mode",
+                ["percent", "dollar"],
+                format_func=lambda x: "% of Bankroll" if x == "percent" else "$ Fixed",
+                horizontal=True,
+                key="button_mode_radio",
+                label_visibility="collapsed"
+            )
+            if button_mode != st.session_state.button_mode:
+                st.session_state.button_mode = button_mode
+                st.rerun()
+
         except Exception as e:
             st.error(f"Error: {e}")
             return False  # Signal error occurred
@@ -2247,27 +2270,60 @@ def render_market_card(market: Dict, binance_data: Dict, client: ClobClient, idx
     if is_active and condition_id and client:
         btn_cols = st.columns(4)
 
-        for i, amount in enumerate(BUY_AMOUNTS):
-            with btn_cols[i]:
-                disabled = should_disable_button(mstate, "up", seconds_remaining) and should_disable_button(mstate, "down", seconds_remaining)
-                if st.button(f"${amount}", key=f"buy_{coin}_{amount}_{idx}", disabled=disabled, use_container_width=True):
-                    # Buy both sides
-                    with st.spinner(f"Buying ${amount} combo..."):
-                        half = amount / 2
-                        success_up, msg_up, _, _ = execute_market_buy(
-                            client, market["up_token_id"], "up", half,
-                            mstate, seconds_remaining, coin
-                        )
-                        success_down, msg_down, _, _ = execute_market_buy(
-                            client, market["down_token_id"], "down", half,
-                            mstate, seconds_remaining, coin
-                        )
-                        if success_up and success_down:
-                            st.success(f"Combo: {msg_up} + {msg_down}")
-                        else:
-                            st.warning(f"Partial: UP={msg_up}, DOWN={msg_down}")
-                        time.sleep(1)
-                        st.rerun()
+        # Get available bankroll for percent mode
+        usdc_balance = get_usdc_balance() or 0
+        available = max(usdc_balance - 5, 0)  # Keep $5 buffer
+
+        if st.session_state.button_mode == "percent":
+            # Percentage-based buttons
+            for i, pct in enumerate(BUY_PERCENTAGES):
+                with btn_cols[i]:
+                    trade_amount = (pct / 100) * available
+                    trade_amount = max(MIN_TRADE_USD, min(trade_amount, MAX_TRADE_USD * 5))  # Min $8, max $500
+                    disabled = should_disable_button(mstate, "up", seconds_remaining) and should_disable_button(mstate, "down", seconds_remaining)
+                    # Two-line label showing % and calculated $
+                    label = f"{pct}% (${trade_amount:.0f})"
+                    if st.button(label, key=f"buy_{coin}_pct{pct}_{idx}", disabled=disabled, use_container_width=True):
+                        # Buy both sides
+                        with st.spinner(f"Buying {pct}% (${trade_amount:.0f}) combo..."):
+                            half = trade_amount / 2
+                            success_up, msg_up, _, _ = execute_market_buy(
+                                client, market["up_token_id"], "up", half,
+                                mstate, seconds_remaining, coin
+                            )
+                            success_down, msg_down, _, _ = execute_market_buy(
+                                client, market["down_token_id"], "down", half,
+                                mstate, seconds_remaining, coin
+                            )
+                            if success_up and success_down:
+                                st.success(f"Combo: {msg_up} + {msg_down}")
+                            else:
+                                st.warning(f"Partial: UP={msg_up}, DOWN={msg_down}")
+                            time.sleep(1)
+                            st.rerun()
+        else:
+            # Legacy dollar mode
+            for i, amount in enumerate(BUY_AMOUNTS):
+                with btn_cols[i]:
+                    disabled = should_disable_button(mstate, "up", seconds_remaining) and should_disable_button(mstate, "down", seconds_remaining)
+                    if st.button(f"${amount}", key=f"buy_{coin}_{amount}_{idx}", disabled=disabled, use_container_width=True):
+                        # Buy both sides
+                        with st.spinner(f"Buying ${amount} combo..."):
+                            half = amount / 2
+                            success_up, msg_up, _, _ = execute_market_buy(
+                                client, market["up_token_id"], "up", half,
+                                mstate, seconds_remaining, coin
+                            )
+                            success_down, msg_down, _, _ = execute_market_buy(
+                                client, market["down_token_id"], "down", half,
+                                mstate, seconds_remaining, coin
+                            )
+                            if success_up and success_down:
+                                st.success(f"Combo: {msg_up} + {msg_down}")
+                            else:
+                                st.warning(f"Partial: UP={msg_up}, DOWN={msg_down}")
+                            time.sleep(1)
+                            st.rerun()
 
 
 def render_opportunities_panel():
