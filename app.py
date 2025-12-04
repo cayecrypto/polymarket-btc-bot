@@ -394,6 +394,36 @@ TERMINAL_CSS = """
     .price-down { color: #ff6b6b; }
     .imbal { color: #ffd93d; }
 
+    /* POSITION ROW */
+    .position-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 11px;
+        color: #7a9a8a;
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px solid rgba(26, 48, 37, 0.5);
+    }
+
+    .pos-label {
+        font-size: 10px;
+        color: #5a8a6a;
+        font-weight: 600;
+    }
+
+    .pos-up {
+        font-family: 'JetBrains Mono', monospace;
+        color: #00cc55;
+        font-size: 10px;
+    }
+
+    .pos-down {
+        font-family: 'JetBrains Mono', monospace;
+        color: #ff6b6b;
+        font-size: 10px;
+    }
+
     /* BUY BUTTONS */
     .btn-row {
         display: flex;
@@ -2093,6 +2123,13 @@ def render_market_card(market: Dict, binance_data: Dict, client: ClobClient, idx
         imbalance = int(metrics["imbalance_signed"])
         seconds_remaining = get_seconds_remaining(market.get("end_time"))
 
+        # Position info
+        shares_up = mstate.get("shares_up", 0.0)
+        shares_down = mstate.get("shares_down", 0.0)
+        avg_up = metrics["avg_up"]
+        avg_down = metrics["avg_down"]
+        has_position = shares_up > 0 or shares_down > 0
+
         # Log opportunity
         log_opportunity(coin, pair_cost, up_price, down_price)
     else:
@@ -2100,6 +2137,11 @@ def render_market_card(market: Dict, binance_data: Dict, client: ClobClient, idx
         locked_profit = 0
         imbalance = 0
         seconds_remaining = 999
+        shares_up = 0
+        shares_down = 0
+        avg_up = 0
+        avg_down = 0
+        has_position = False
 
     # Coin color
     coin_colors = {"BTC": "#f7931a", "ETH": "#627eea", "SOL": "#00ffa3", "XRP": "#c0c0c0"}
@@ -2130,6 +2172,12 @@ def render_market_card(market: Dict, binance_data: Dict, client: ClobClient, idx
         price_str = ""
         change_str = ""
 
+    # Build position row HTML if we have a position
+    if has_position:
+        position_html = f'<div class="position-row"><span class="pos-label">POS</span><span class="pos-up">▲ {shares_up:.1f} @{avg_up:.3f}</span><span class="pos-down">▼ {shares_down:.1f} @{avg_down:.3f}</span></div>'
+    else:
+        position_html = ""
+
     card_html = f"""
     <div class="market-card {edge_class}">
         <div class="market-card-header">
@@ -2153,6 +2201,7 @@ def render_market_card(market: Dict, binance_data: Dict, client: ClobClient, idx
             <span>Down <span class="price-down">{down_price:.3f}</span></span>
             <span>Imbal <span class="imbal">{imbalance:+d}</span></span>
         </div>
+        {position_html}
     </div>
     """
 
@@ -2208,23 +2257,25 @@ def render_opportunities_panel():
 
         opps_html += f'<div class="opp-row"><span class="opp-time">{time_str}</span><span class="opp-coin">{coin_str}</span><span class="opp-pair">{pair_val:.3f}</span><span class="opp-edge">edge {edge_val:.1f}%</span>{best_badge}</div>'
 
-    # Calculate missed profit estimate based on average trade size from history
-    trade_log = st.session_state.state.get("trade_log", [])
-    if trade_log:
-        avg_trade_size = sum(t.get("usdc", 0) for t in trade_log[:20]) / max(len(trade_log[:20]), 1)
-        avg_trade_size = max(avg_trade_size, 10)  # Minimum $10
-    else:
-        avg_trade_size = 25  # Default assumption
+    # Calculate trade size based on current bankroll (same as AUTO MODE logic)
+    usdc_balance = get_usdc_balance() or 0
+    available_usdc = max(usdc_balance - 5, 0)  # Keep $5 buffer
 
-    # Calculate potential profit: edge% * trade_size * 2 (because you bet on both sides)
-    # Only count good edges (already filtered by log_opportunity)
-    missed_profit = sum(opp.get("edge", 0) * avg_trade_size * 2 for opp in opportunities[:12]) / 100
+    # Dynamic trade size: 12% of available, capped at $100, min $8
+    dynamic_trade_size = available_usdc * MAX_TRADE_PCT
+    dynamic_trade_size = max(MIN_TRADE_USD, min(MAX_TRADE_USD, dynamic_trade_size))
+
+    # Calculate potential profit using the gabagool strategy sizing
+    # Each opportunity = buying cheaper side, edge% profit on trade size
+    missed_profit = sum(opp.get("edge", 0) * dynamic_trade_size for opp in opportunities[:12]) / 100
     opp_count = len([o for o in opportunities[:12] if o.get("edge", 0) >= 0.5])
 
     if not opps_html:
         opps_html = '<div style="color: #5a8a6a; text-align: center; padding: 20px;">No good opportunities yet (need ≥0.5% edge)</div>'
 
-    return f'<div class="opportunities-panel"><div class="panel-header"><span class="panel-title">LAST {opp_count} GOOD OPPORTUNITIES</span></div>{opps_html}<div class="missed-profit">Est. missed @ ${avg_trade_size:.0f}/trade: <span class="missed-value">+${missed_profit:.2f}</span></div></div>'
+    # Show bankroll info in the missed profit calculation
+    bankroll_pct = int(MAX_TRADE_PCT * 100)
+    return f'<div class="opportunities-panel"><div class="panel-header"><span class="panel-title">LAST {opp_count} GOOD OPPORTUNITIES</span></div>{opps_html}<div class="missed-profit">Est. missed @ ${dynamic_trade_size:.0f}/trade ({bankroll_pct}% of ${available_usdc:.0f}): <span class="missed-value">+${missed_profit:.2f}</span></div></div>'
 
 
 def render_bottom_ticker():
@@ -2261,49 +2312,46 @@ def render_bottom_ticker():
 
 
 def render_auto_toggle():
-    """Render the AUTO mode toggle switch - big prominent button."""
-    is_on = st.session_state.auto_mode
-
-    # Inject pulsing CSS when ON
-    if is_on:
-        st.markdown("""
-        <style>
-        div[data-testid="stButton"] button[kind="primary"] {
-            background: linear-gradient(145deg, #0d3820, #1a5c35) !important;
-            border: 2px solid #00ff6a !important;
-            box-shadow: 0 0 20px rgba(0, 255, 106, 0.4) !important;
-            animation: pulse-auto 2s infinite !important;
-            font-size: 16px !important;
-            font-weight: 800 !important;
-            letter-spacing: 2px !important;
-        }
-        @keyframes pulse-auto {
-            0%, 100% { box-shadow: 0 0 20px rgba(0, 255, 106, 0.4); }
-            50% { box-shadow: 0 0 35px rgba(0, 255, 106, 0.8); }
-        }
-        </style>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <style>
-        div[data-testid="stButton"] button[kind="secondary"] {
-            background: linear-gradient(145deg, #2a1515, #3a2020) !important;
-            border: 2px solid #ff4d4d !important;
-            color: #ff4d4d !important;
-            font-size: 16px !important;
-            font-weight: 800 !important;
-            letter-spacing: 2px !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
+    """Render the AUTO mode toggle switch."""
+    # Custom CSS for the toggle
+    st.markdown("""
+    <style>
+    /* Style the toggle container */
+    div[data-testid="stToggle"] {
+        background: linear-gradient(145deg, #111916, #0f1512) !important;
+        padding: 12px 20px !important;
+        border-radius: 8px !important;
+        border: 1px solid #1a3025 !important;
+    }
+    div[data-testid="stToggle"] label {
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 16px !important;
+        font-weight: 700 !important;
+        letter-spacing: 2px !important;
+    }
+    /* Pulsing glow when ON */
+    div[data-testid="stToggle"]:has(input:checked) {
+        border-color: #00ff6a !important;
+        box-shadow: 0 0 20px rgba(0, 255, 106, 0.3) !important;
+        animation: pulse-auto 2s infinite !important;
+    }
+    @keyframes pulse-auto {
+        0%, 100% { box-shadow: 0 0 20px rgba(0, 255, 106, 0.3); }
+        50% { box-shadow: 0 0 30px rgba(0, 255, 106, 0.6); }
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        btn_label = "🟢 AUTO: ON — PRINTING" if is_on else "🔴 AUTO: OFF"
-        btn_type = "primary" if is_on else "secondary"
-
-        if st.button(btn_label, key="auto_toggle", type=btn_type, use_container_width=True):
-            st.session_state.auto_mode = not st.session_state.auto_mode
+        # Use actual toggle
+        auto_on = st.toggle(
+            "🤖 AUTO MODE — PRINTING" if st.session_state.auto_mode else "🤖 AUTO MODE",
+            value=st.session_state.auto_mode,
+            key="auto_toggle"
+        )
+        if auto_on != st.session_state.auto_mode:
+            st.session_state.auto_mode = auto_on
             st.rerun()
 
 
